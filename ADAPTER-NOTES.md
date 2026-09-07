@@ -1,8 +1,8 @@
 # SIGNATIF conformance-to-model map — `unidpp-signatif` against the published SIGNATIF standard
 
-**Subject:** `/Users/mulgogi/src/unidpp/unidpp-signatif/` (Rust crate, 5 081 LOC src + tests).
-**Standard:** `/Users/mulgogi/src/calconnect/cc-signatif/sources/` (CC/SIGNATIF AsciiDoc).
-**Task register:** `~/src/unidpp/TODO.impl/10-remaining-tasks-definitive.md` §19 (2026-09-07).
+**Subject:** `this crate/` (Rust crate, 5 081 LOC src + tests).
+**Standard:** `the SIGNATIF standard sources (CalConnect)` (CC/SIGNATIF AsciiDoc).
+**Task register:** `10-remaining-tasks-definitive.md` §19 (2026-09-07).
 **Date of audit:** 2026-09-07.
 
 This map cross-walks SIGNATIF normative clauses (the registered requirements
@@ -10,15 +10,15 @@ classes defined in the standard) against the `unidpp-signatif` crate modules,
 tests, and behavioural surface. It records three classes of result:
 
 - **conforms** — the clause is implemented, in scope, with test coverage that
-  exercises the behaviour;
+ exercises the behaviour;
 - **adapter** — the clause is implemented in a way that diverges from the
-  standard's prescribed shape by documented design choice (renaming,
-  finer-grained decomposition, semantic refinement); the conformance is
-  intact and the deviation is noted with the seam where a future integration
-  would harmonize;
+ standard's prescribed shape by documented design choice (renaming,
+ finer-grained decomposition, semantic refinement); the conformance is
+ intact and the deviation is noted with the seam where a future integration
+ would harmonize;
 - **diverges** — the clause's norm is not implemented, or is implemented in a
-  way that would not pass a SIGNATIF conformance suite; the gap is recorded
-  with the location where the missing behaviour should land.
+ way that would not pass a SIGNATIF conformance suite; the gap is recorded
+ with the location where the missing behaviour should land.
 
 No code was changed in producing this map.
 
@@ -42,7 +42,7 @@ No code was changed in producing this map.
 | end certificate | unnumbered | `DelegationCredential` whose child is `NodeKind::End`; the end node's `RegisteredKey` is the authorized signing key | conforms |
 | trusted artifact | unnumbered | `verify::VerificationTarget { log, co_signature, anchor, profile, provided, active_links }` + the core's artifact event log | conforms |
 | canonical payload | unnumbered | the core's `unidpp_model::CanonicalWriter` (used throughout `scope.rs`, `graph.rs`, `sign.rs`, `anchor.rs`); co-signatures bind the same bytes (`sign::CoSignature::payload`); the deferred suites consume the same payload bytes | conforms |
-| authorization scope (scope) | §3.6.1 | `scope::DelegationScope { authority, profile_version, product_group, window }` | adapter — 4 layers vs standard's 6 (domain, subdomain, class, instance, identity, conditions). Documented substitution: the 4 layers in the crate map directly onto UniDPP's operating model (PLAN.md, trust-registry section). `conditions` are not implemented as a separate dimension; see §1.2. `domain`/`subdomain` are folded into the `authority` layer; `class`/`instance`/`identity` are folded into `product_group`. This is a profile choice within the standard's "additional dimensions may be defined by profiles" allowance (§3.5). |
+| authorization scope (scope) | §3.6.1 | `scope::DelegationScope { authority, profile_version, product_group, window }` | adapter — 4 layers vs standard's 6 (domain, subdomain, class, instance, identity, conditions). Documented substitution: the 4 layers in the crate map directly onto UniDPP's operating model (the UniDPP design framework, trust-registry section). `conditions` are not implemented as a separate dimension; see §1.2. `domain`/`subdomain` are folded into the `authority` layer; `class`/`instance`/`identity` are folded into `product_group`. This is a profile choice within the standard's "additional dimensions may be defined by profiles" allowance (§3.5). |
 | authorization scope dimension | §3.6.2 | `scope::LayerConstraint` (Any / Only(set)) + `WindowConstraint` (Anytime / Within(Interval)) | conforms |
 | authorization scope narrowing | §3.6.3 | `DelegationScope::narrow` + `narrow` chain in `graph::TrustGraph::resolve` (`graph.rs:740–755`) | conforms (with documented 4-layer substitution; see §1.2) |
 | authorization scope condition | §3.6.4 | **not implemented** | diverges — see §1.2 |
@@ -136,12 +136,12 @@ trust authority → end certificate → trusted artifact) is mapped as:
 
 - L1 root trust authority → `NodeKind::Root` (optionally a `ThresholdGroup`)
 - L2 delegated trust authority → `NodeKind::Delegated` (also a `ThresholdGroup`
-  permitted) and `NodeKind::ThresholdGroup { threshold, members }` for
-  federations
+ permitted) and `NodeKind::ThresholdGroup { threshold, members }` for
+ federations
 - L3 end certificate → a `DelegationCredential` whose `child` is
-  `NodeKind::End`; the end node's `RegisteredKey` is the authorized signing key
+ `NodeKind::End`; the end node's `RegisteredKey` is the authorized signing key
 - L4 trusted artifact → `verify::VerificationTarget { log, co_signature, ... }`
-  + the core's `EventLog`
+ + the core's `EventLog`
 
 The standard notes L1 may be "1-of-1, threshold, or federated"; the crate
 covers 1-of-1 (`NodeKind::Root`) and threshold/federated
@@ -168,8 +168,8 @@ record it in the credential's `metadata`).
 - the authorization scope — `DelegationCredential::scope`
 - scope conditions, if any — see §1.2
 - a reference to the issuing trust authority's delegation chain — implicit
-  (the chain is the path the verifier walks; no embedded reference on the
-  certificate in the standard's normative sense either)
+ (the chain is the path the verifier walks; no embedded reference on the
+ certificate in the standard's normative sense either)
 
 **Status:** conforms modulo scope conditions.
 
@@ -177,13 +177,13 @@ record it in the credential's `metadata`).
 
 - threshold memberships — multi-hop through `ThresholdGroup` members
 - federated trust authorities — `ThresholdGroup { threshold, members }`
-  spanning multiple `Delegated` nodes
+ spanning multiple `Delegated` nodes
 - cross-domain co-signatures — `sign::CoSignature` permits multiple suites
-  (which can be from independent trust chains)
+ (which can be from independent trust chains)
 - mutual recognition — **not explicitly modeled**: two `Root` nodes do not
-  carry a mutual-recognition edge in the graph data model. The graph supports
-  it by the standard DAG mechanism (a delegation credential between two
-  roots), but the topology profiles (`§19`) are not enumerated.
+ carry a mutual-recognition edge in the graph data model. The graph supports
+ it by the standard DAG mechanism (a delegation credential between two
+ roots), but the topology profiles (`§19`) are not enumerated.
 
 **Status:** conforms on first three; **adapter** on mutual recognition (the
 mechanism is available; a deployment profile can populate it).
@@ -191,20 +191,20 @@ mechanism is available; a deployment profile can populate it).
 ### 4.5 Path-finding (CC/SIGNATIF §7 `architecture-pathfinding`)
 
 - monotonic scope narrowing at every link — `graph::resolve` calls
-  `effective.narrow(&cred.scope)` per hop (`graph.rs:746–755`); widening
-  errors out
+ `effective.narrow(&cred.scope)` per hop (`graph.rs:746–755`); widening
+ errors out
 - cryptographic signature validation at every link — `graph::resolve` calls
-  `self.verify_credential(cred)` per hop (`graph.rs:742–746`)
+ `self.verify_credential(cred)` per hop (`graph.rs:742–746`)
 - transparency log inclusion — **not enforced** at the trust-graph layer; the
-  `TrustGraph::verify_credential` path does not consult a transparency log.
-  The pipeline (`verify::SignatifVerifier`) does require `target.anchor` and
-  bakes transparency into the core verdict via `VerdictBuilder::with_anchor`,
-  but a chain-link transparency check (`graph.rs:122` in the standard's
-  algorithm) is not performed here.
+ `TrustGraph::verify_credential` path does not consult a transparency log.
+ The pipeline (`verify::SignatifVerifier`) does require `target.anchor` and
+ bakes transparency into the core verdict via `VerdictBuilder::with_anchor`,
+ but a chain-link transparency check (`graph.rs:122` in the standard's
+ algorithm) is not performed here.
 - revocation status checking for every authority on the path — **not
-  enforced** in `graph::resolve`; the revocation ledger is consulted in
-  `verify::SignatifVerifier::verify` (per-slot `key_standing`) but not per
-  hop in path-finding.
+ enforced** in `graph::resolve`; the revocation ledger is consulted in
+ `verify::SignatifVerifier::verify` (per-slot `key_standing`) but not per
+ hop in path-finding.
 
 **Status:** conforms on the first two checks; **diverges** on the
 chain-link transparency check and the per-hop revocation check at the graph
@@ -230,9 +230,9 @@ numbers are recorded in `anchor::LogEntry { commitment, salt_ref }` and
 
 - self-contained — `AnchorBundle` carries the full jurisdiction + master data
 - versioned — versioning delegates to a deployment-side convention; the crate
-  does not embed a version field on the bundle itself (**adapter** —
-  the standard says "each bundle carries a version identifier"; the crate
-  carries `jurisdiction` and relies on the caller's deployment manifest)
+ does not embed a version field on the bundle itself (**adapter** —
+ the standard says "each bundle carries a version identifier"; the crate
+ carries `jurisdiction` and relies on the caller's deployment manifest)
 - distributable — serde-serializable
 
 **Status:** adapter (version field delegated).
@@ -254,7 +254,7 @@ numbers are recorded in `anchor::LogEntry { commitment, salt_ref }` and
 ### 5.2 Canonical payload (CC/SIGNATIF §8 `artifact-canonical-payload`)
 
 - Determinism — `CanonicalWriter` is deterministic; the canonical bytes are
-  unambiguous
+ unambiguous
 - Recoverability — the core's reader API round-trips
 - Unambiguity — fully specified by the core's framing
 - Collision resistance — SHA-256 with length-prefixed fields
@@ -265,7 +265,7 @@ numbers are recorded in `anchor::LogEntry { commitment, salt_ref }` and
 
 - Signer identity — `SignatureSlot::key_id`
 - Chain reference — implicit (each slot carries its own key id; the chain
-  is per-slot via `graph::TrustGraph::resolve`)
+ is per-slot via `graph::TrustGraph::resolve`)
 - Algorithm — `SignatureSlot::suite`
 - Dimension tag — `SigningDomain` per slot
 - Signature value — `SignatureSlot::signature`
@@ -315,9 +315,9 @@ defined in `unidpp-core`, not in this crate.
 ### 6.1 Classical signature algorithms (CC/SIGNATIF §9 `algorithms-classical`)
 
 - ECDSA P-256 — `Suite::EcdsaP256`, real computation via the `p256` crate
-  (RFC 6979 deterministic nonce; `keyring.rs:256–261`)
+ (RFC 6979 deterministic nonce; `keyring.rs:256–261`)
 - EdDSA Ed25519 — `Suite::Ed25519`, real computation via `ed25519-dalek`
-  (`keyring.rs:252–254`)
+ (`keyring.rs:252–254`)
 
 The standard also enumerates SM2; the crate frames SM2 (`Suite::Sm2`) but
 defers computation to a future GM/T 0003 binding — see §1.1 "composite
@@ -487,12 +487,12 @@ reversibility.
 ### 9.6 Query interface (`§12 revocation-query`)
 
 - "Given an artifact, return its bound authority states and their
-  revocation status" — `SlotTrust.standing` per slot (`verify.rs:79–82`).
+ revocation status" — `SlotTrust.standing` per slot (`verify.rs:79–82`).
 - "Given a revoked state, return the set of artifacts transitively bound
-  to it" — `RevocationLedger::taints_of` walks ancestors; the inverse
-  query (descendants of a revoked state) is implemented in the core's
-  `ProvenanceGraph::descendants` and exercised in `tests/scenario_misissuance::retroactive_declaration_voids_in_window_and_revalidates_outside`
-  (`scenario_misissuance.rs:201`).
+ to it" — `RevocationLedger::taints_of` walks ancestors; the inverse
+ query (descendants of a revoked state) is implemented in the core's
+ `ProvenanceGraph::descendants` and exercised in `tests/scenario_misissuance::retroactive_declaration_voids_in_window_and_revalidates_outside`
+ (`scenario_misissuance.rs:201`).
 
 **Status:** conforms.
 
@@ -854,50 +854,50 @@ The most consequential divergences — those that would fail a SIGNATIF
 conformance test suite today — are:
 
 1. **Authorization scope conditions (CC/SIGNATIF §3.6.4, §11 `scope-conditions`).**
-   No `conditions` dimension on `scope::DelegationScope`, no predicate
-   evaluator, no `scope_condition_failed` failure reason. Affects every
-   pipeline check that asserts "an artifact signed by a key whose scope
-   conditions are not met fails verification". **Where to add:**
-   `scope::DelegationScope { conditions: Vec<Condition> }`,
-   `verify::SignatifVerifier::verify` to evaluate conditions against
-   `target.co_signature.payload`. Citations:
-   `src/scope.rs:175–186` (DelegationScope fields),
-   `src/scope.rs:250–277` (DelegationScope::narrow — no conditions narrowing),
-   `src/verify.rs:127–137` (`accepted()` does not check scope conditions).
+ No `conditions` dimension on `scope::DelegationScope`, no predicate
+ evaluator, no `scope_condition_failed` failure reason. Affects every
+ pipeline check that asserts "an artifact signed by a key whose scope
+ conditions are not met fails verification". **Where to add:**
+ `scope::DelegationScope { conditions: Vec<Condition> }`,
+ `verify::SignatifVerifier::verify` to evaluate conditions against
+ `target.co_signature.payload`. Citations:
+ `src/scope.rs:175–186` (DelegationScope fields),
+ `src/scope.rs:250–277` (DelegationScope::narrow — no conditions narrowing),
+ `src/verify.rs:127–137` (`accepted()` does not check scope conditions).
 
 2. **Composite signatures (CC/SIGNATIF §3.7.4, §9 `algorithms-composite`).**
-   No composite-signature primitive. The crate's multi-suite co-signature
-   model substitutes but is *collection* not cryptographic AND-composition.
-   **Where to add:** a `sign::CompositeSignature { scheme: CompositeScheme, ... }`
-   carrying the AND of two signature values, with verification gated on
-   both. Citation: `src/sign.rs:32–36` documents the deferral explicitly.
+ No composite-signature primitive. The crate's multi-suite co-signature
+ model substitutes but is *collection* not cryptographic AND-composition.
+ **Where to add:** a `sign::CompositeSignature { scheme: CompositeScheme, ... }`
+ carrying the AND of two signature values, with verification gated on
+ both. Citation: `src/sign.rs:32–36` documents the deferral explicitly.
 
 3. **External time anchoring of transparency tree heads (CC/SIGNATIF §13 `transparency-anchoring`).**
-   `SignedTreeHead` is signed by the operator's key in
-   `SigningDomain::TreeHead` but is not anchored to an external, irrefutable
-   time source (OpenTimestamps, RFC 3161 TSA, blockchain anchor). The
-   standard treats this as a normative requirement on the log operator.
-   **Where to add:** an `anchor::ExternalAnchor` type carrying the
-   OpenTimestamps-style proof; `SignedTreeHead { external_anchor: Option<...> }`.
-   Citations: `src/anchor.rs:266–278` (SignedTreeHead), `src/anchor.rs:238–260`
-   (`sign_tree_head`).
+ `SignedTreeHead` is signed by the operator's key in
+ `SigningDomain::TreeHead` but is not anchored to an external, irrefutable
+ time source (OpenTimestamps, RFC 3161 TSA, blockchain anchor). The
+ standard treats this as a normative requirement on the log operator.
+ **Where to add:** an `anchor::ExternalAnchor` type carrying the
+ OpenTimestamps-style proof; `SignedTreeHead { external_anchor: Option<...> }`.
+ Citations: `src/anchor.rs:266–278` (SignedTreeHead), `src/anchor.rs:238–260`
+ (`sign_tree_head`).
 
 4. **SLH-DSA framing (CC/SIGNATIF §9 `algorithms-post-quantum`).**
-   The crate's `Suite` enum has Ed25519, ECDSA-P256, SM2, ML-DSA-44/65/87
-   but no SLH-DSA (`sign.rs:37–51`). The standard's `tab-pqc-algorithms`
-   names ML-DSA and SLH-DSA. **Where to add:** `Suite::SlhDsa` (with
-   parameter-set variants). Citation: `src/sign.rs:56–63` (`Suite::ALL`).
+ The crate's `Suite` enum has Ed25519, ECDSA-P256, SM2, ML-DSA-44/65/87
+ but no SLH-DSA (`sign.rs:37–51`). The standard's `tab-pqc-algorithms`
+ names ML-DSA and SLH-DSA. **Where to add:** `Suite::SlhDsa` (with
+ parameter-set variants). Citation: `src/sign.rs:56–63` (`Suite::ALL`).
 
 5. **Scope condition withdrawal (CC/SIGNATIF §12 `revocation-condition-withdrawal`).**
-   Depends on item 1; cannot be implemented until scope conditions exist.
-   Citations: `src/revoke.rs:81–106` (revocation condition withdrawal is
-   absent from the module; the §12 algorithm is unencoded).
+ Depends on item 1; cannot be implemented until scope conditions exist.
+ Citations: `src/revoke.rs:81–106` (revocation condition withdrawal is
+ absent from the module; the §12 algorithm is unencoded).
 
 6. **Deployment manifest (CC/SIGNATIF §18).**
-   No `DeploymentManifest` type. The active algorithms, migration phase,
-   topology profile, and scope extensions are deployment-side data with no
-   normative shape. **Where to add:** `manifest::DeploymentManifest` or a
-   `meta` submodule of the crate.
+ No `DeploymentManifest` type. The active algorithms, migration phase,
+ topology profile, and scope extensions are deployment-side data with no
+ normative shape. **Where to add:** `manifest::DeploymentManifest` or a
+ `meta` submodule of the crate.
 
 ### 20.3 Top adapters (semantic equivalences, no conformance gap)
 
@@ -905,40 +905,40 @@ The adapter class captures places where the crate diverges from the
 standard's prescribed shape by deliberate, documented design. The most consequential:
 
 - **4-layer scope instead of 6-layer.** The standard's six dimensions
-  (domain, subdomain, class, instance, identity, conditions) are mapped
-  onto UniDPP's operating model (authority, profile-version,
-  product-group, window). This is a profile choice the standard
-  permits ("additional dimensions may be defined by profiles"). The
-  `conditions` dimension is the only one that loses real semantics (see
-  divergence #1).
+ (domain, subdomain, class, instance, identity, conditions) are mapped
+ onto UniDPP's operating model (authority, profile-version,
+ product-group, window). This is a profile choice the standard
+ permits ("additional dimensions may be defined by profiles"). The
+ `conditions` dimension is the only one that loses real semantics (see
+ divergence #1).
 
 - **Trust graph path-finding without chain-link transparency or per-hop
-  revocation.** The crate does the cryptographic and scope-narrowing
-  checks per hop but does not consult the transparency log or the
-  revocation ledger per hop. Both are surfaced at the verdict level via
-  the core's anchor and per-slot standing. The end effect on the
-  coverage report is equivalent for implemented checks; the unimplemented
-  per-hop revocation check is a divergence (item #5 above).
+ revocation.** The crate does the cryptographic and scope-narrowing
+ checks per hop but does not consult the transparency log or the
+ revocation ledger per hop. Both are surfaced at the verdict level via
+ the core's anchor and per-slot standing. The end effect on the
+ coverage report is equivalent for implemented checks; the unimplemented
+ per-hop revocation check is a divergence (item #5 above).
 
 - **`TrustGraph::resolve` returns the first matching path, not the set of
-  all valid paths.** The standard's path-finding algorithm collects all
-  valid paths into `P`. The crate collects the first valid path and the
-  core's coverage report enumerates the slot-level union. The
-  per-slot union is a faithful projection of the path set; the strict
-  "all valid paths" semantics are achieved at the coverage-report level.
+ all valid paths.** The standard's path-finding algorithm collects all
+ valid paths into `P`. The crate collects the first valid path and the
+ core's coverage report enumerates the slot-level union. The
+ per-slot union is a faithful projection of the path set; the strict
+ "all valid paths" semantics are achieved at the coverage-report level.
 
 - **Ed25519 as an infrastructure suite (not in the core's carrier table).**
-  The crate documents this as an extension (`sign.rs:31–36`); the
-  standard does not restrict the suite table. The acceptance policy
-  scopes which suites a verifier accepts, which is conformant with the
-  algorithm-agility clause.
+ The crate documents this as an extension (`sign.rs:31–36`); the
+ standard does not restrict the suite table. The acceptance policy
+ scopes which suites a verifier accepts, which is conformant with the
+ algorithm-agility clause.
 
 - **Quorum ceremony interface without cryptographic implementation.**
-  `confium::CeremonyCoordinator` defines the lifecycle, message
-  validation, and identifiable abort; the mock performs plain Ed25519
-  signatures. The interface conforms; the cryptographic re-share and
-  threshold aggregation await the Confium binding (no production code
-  change in this audit).
+ `confium::CeremonyCoordinator` defines the lifecycle, message
+ validation, and identifiable abort; the mock performs plain Ed25519
+ signatures. The interface conforms; the cryptographic re-share and
+ threshold aggregation await the Confium binding (no production code
+ change in this audit).
 
 ---
 
@@ -981,6 +981,6 @@ standard's prescribed shape by deliberate, documented design. The most consequen
 ---
 
 *End of ADAPTER-NOTES.md — 2026-09-07. Audit produced by reading the
-standard AsciiDoc at `/Users/mulgogi/src/calconnect/cc-signatif/sources/`
-and the crate at `/Users/mulgogi/src/unidpp/unidpp-signatif/`. No code
+standard AsciiDoc at `the SIGNATIF standard sources (CalConnect)`
+and the crate at `this crate/`. No code
 changed.*

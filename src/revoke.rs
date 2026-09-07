@@ -3,7 +3,7 @@
 //! re-validation outside it, and propagation to transitively bound
 //! artifacts through the core's taint/provenance crates.
 //!
-//! PLAN.md (the corrected fraud/misissuance retroactivity model):
+//! the UniDPP design framework (the corrected fraud/misissuance retroactivity model):
 //! revocation is not one operation — **the reason determines
 //! retroactivity**. Prospective reasons (key compromise after time T,
 //! cessation, supersession, affiliation change) leave prior as-of

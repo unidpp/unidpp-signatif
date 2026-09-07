@@ -2,7 +2,7 @@
 //!
 //! Every delegation edge in the trust graph carries a
 //! [`DelegationScope`] constraining *what the delegatee may do* along
-//! four orthogonal layers (PLAN.md, trust-registry section; the
+//! four orthogonal layers (the UniDPP design framework, trust-registry section; the
 //! SIGNATIF four-layer scope enforcement):
 //!
 //! 1. **authority** — which trust authority's acts are covered;

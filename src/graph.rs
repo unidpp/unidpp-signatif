@@ -2,7 +2,7 @@
 //! lists, M-of-K master-list entries, and path-finding from an artifact
 //! signature to a verifier's anchor bundle.
 //!
-//! Node kinds (PLAN.md operating model — "jurisdictional trust
+//! Node kinds (the UniDPP design framework operating model — "jurisdictional trust
 //! authorities (threshold groups, not single keys) → trust lists → a
 //! globally multi-witnessed master list"):
 //!

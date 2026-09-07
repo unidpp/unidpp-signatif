@@ -13,7 +13,7 @@
 //! Policy-scoped acceptance: a co-signature passes if **any** suite the
 //! verifier's [`AcceptancePolicy`] allows verifies under a registered
 //! key; a stricter policy can require `min_verified_suites` distinct
-//! verified suites (the PLAN.md multi-suite co-signature model: every
+//! verified suites (the the UniDPP design framework multi-suite co-signature model: every
 //! jurisdiction verifies under its own crypto policy, and a lens
 //! registry is multi-suite co-signed for exactly that reason).
 
@@ -468,7 +468,7 @@ impl CoSignatureReport {
 /// Policy-scoped acceptance: which suites this verifier accepts, and how
 /// many distinct verified suites it demands.
 ///
-/// The default reading of PLAN.md's multi-suite model is *any-allowed*:
+/// The default reading of the UniDPP design framework's multi-suite model is *any-allowed*:
 /// acceptance if ANY registered suite the policy allows verifies. A
 /// `min_verified_suites` of 2 or more encodes the stricter
 /// multi-signed / lens-registry co-signature requirement.

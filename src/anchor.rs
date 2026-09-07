@@ -13,7 +13,7 @@
 //! Confium constants deliberately so the seam composes with Confium's
 //! `confium-transparency` crate when the real binding lands.)
 //!
-//! **Logs anchor commitments, never facts** (PLAN.md, enumeration
+//! **Logs anchor commitments, never facts** (the UniDPP design framework, enumeration
 //! resistance): a leaf is [`LogEntry::commitment`] — a salted hash of
 //! an event head or fact reference ([`salted_commitment`]) — plus an
 //! opaque `salt_ref` into the owner-side salt store. A log operator
