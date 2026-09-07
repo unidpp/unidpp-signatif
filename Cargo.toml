@@ -21,6 +21,10 @@ sm2 = ["dep:sm2"]
 # (seeded keygen + deterministic signing). With the feature off, the
 # suite stays framing-only. MlDsa44/87 remain framed either way.
 ml-dsa = ["dep:ml-dsa"]
+# ML-KEM-768 (FIPS 203) real computation for envelope encryption via
+# the `ml-kem` crate. Without it, the envelope's PQ recipient path
+# refuses; X25519 computes unconditionally.
+ml-kem = ["dep:ml-kem"]
 # SLH-DSA (FIPS 205) integration seam. Deliberately a STUB: enabling it
 # does not yet compute SLH-DSA, because the PQ binding crate is
 # intentionally not a dependency (build-size and supply-chain review
@@ -41,6 +45,11 @@ ed25519-dalek = "2"
 p256 = "0.13"
 sm2 = { version = "0.13", default-features = false, features = ["dsa", "alloc"], optional = true }
 ml-dsa = { version = "0.1", default-features = false, features = ["alloc"], optional = true }
+ml-kem = { version = "0.3", default-features = false, features = ["alloc"], optional = true }
+aes-gcm = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+hkdf = "0.12"
+sha2 = "0.10"
 
 [dev-dependencies]
 serde_json = "1"

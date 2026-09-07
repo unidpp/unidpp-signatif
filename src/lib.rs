@@ -58,6 +58,7 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 
 pub mod anchor;
+pub mod envelope;
 pub mod graph;
 pub mod keyring;
 pub mod manifest;
