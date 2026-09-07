@@ -163,7 +163,7 @@ fn retroactive_declaration_voids_in_window_and_revalidates_outside() {
     record_issuance(&mut w.issuers, &bad, T_BAD, &w.topo.issuer_key);
     record_issuance(&mut w.issuers, &derived, T_DERIVED, &w.topo.issuer_key);
     // pack-derived is combined from battery-bad: transitive binding.
-    w.provenance.record_combine(derived.clone(), &[bad.clone()]);
+    w.provenance.record_combine(derived.clone(), std::slice::from_ref(&bad));
 
     // Pre-declaration: all valid.
     assert!(verdict_for(&w, &log_bad, T_VERIFY).accepted());

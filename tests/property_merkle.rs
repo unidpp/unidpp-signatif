@@ -42,7 +42,7 @@ impl Rng {
 
 #[test]
 fn every_inclusion_proof_verifies_and_rejects_forgeries() {
-    let mut rng = Rng::new(0x5EED_1);
+    let mut rng = Rng::new(0x005E_ED01);
     for round in 0..24 {
         let n = rng.range(1, 41) as usize;
         let mut log = TransparencyLog::new("prop");
@@ -104,7 +104,7 @@ fn every_inclusion_proof_verifies_and_rejects_forgeries() {
 
 #[test]
 fn every_consistency_proof_verifies_and_rejects_forgeries() {
-    let mut rng = Rng::new(0x5EED_2);
+    let mut rng = Rng::new(0x005E_ED02);
     for round in 0..20 {
         let n = rng.range(2, 37) as usize;
         let mut log = TransparencyLog::new("prop");
@@ -166,7 +166,7 @@ fn every_consistency_proof_verifies_and_rejects_forgeries() {
 
 #[test]
 fn append_only_roots_never_repeat_and_domain_separation_holds() {
-    let mut rng = Rng::new(0x5EED_3);
+    let mut rng = Rng::new(0x005E_ED03);
     let mut log = TransparencyLog::new("prop");
     let mut seen = std::collections::BTreeSet::new();
     let mut prev = None;
