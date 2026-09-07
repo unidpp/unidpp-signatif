@@ -66,6 +66,7 @@ pub mod revoke;
 pub mod rollup;
 pub mod scope;
 pub mod sign;
+pub mod threshold;
 pub mod verify;
 
 #[cfg(feature = "confium")]
