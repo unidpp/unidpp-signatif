@@ -54,3 +54,7 @@ hkdf = "0.12"
 sha2 = "0.10"
 
 [dev-dependencies]
+# Integration tests assert that threshold group signatures verify as
+# plain Ed25519 under any verifier (the same crate the library uses;
+# no new external code).
+ed25519-dalek = "2"

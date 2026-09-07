@@ -6,12 +6,23 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every feature combination the crate claims, validated
+        # locally with the exact commands below:
+        # - "" — the default (no features): Ed25519 + ECDSA-P256
+        #   compute; SM2 / ML-DSA / ML-KEM stay framing-only;
+        # - each real-crypto binding alone, and all three together;
+        # - the confium seam: its module and scenario tests compile
+        #   only with the feature on.
+        features:
+          ["", "sm2", "ml-dsa", "ml-kem", "sm2,ml-dsa,ml-kem", "confium"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --all
-
+      - run: cargo clippy --all-targets --features "${{ matrix.features }}" -- -D warnings
+      - run: cargo test --features "${{ matrix.features }}"

@@ -1,17 +1,30 @@
-//! Confium seam: interface-only trait shapes for threshold ceremonies.
+//! Confium seam: trait shapes for threshold ceremonies, with two
+//! implementations.
 //!
-//! **Documented deviation — interface-only, no build dependency.** The
+//! **Documented deviation — no build dependency on Confium.** The
 //! [Confium](https://github.com/confium/confium) framework (Ribose) is
 //! the reference implementation of multi-stakeholder threshold
 //! cryptography (FROST/GG18/CMP20 sessions, async coordinators,
 //! compartmentalized stores). SIGNATIF models the *ceremony interfaces
 //! a trust authority would implement* — root DKG, quorate signing,
-//! re-sharing — but does not link Confium crates: the real binding
-//! (FFI to `confium-tc` or a native Rust dependency) is deferred until
-//! the integration is scheduled. Until then this module compiles
-//! behind the `confium` feature with zero external dependencies, and
-//! [`mock::MockCeremony`] provides a deterministic, clearly-labelled
-//! stand-in for tests.
+//! re-sharing — but does not link Confium crates: a real FFI/native
+//! binding (`confium-tc`) remains deferred until the integration is
+//! scheduled. What the seam offers instead:
+//!
+//! - [`mock::MockCeremony`] — a deterministic, clearly-labelled,
+//!   interface-only stand-in (**no cryptography**). Use it for
+//!   lifecycle and interface tests of the trust layer: session states,
+//!   message counts, member authentication, expiry, misbehavior
+//!   plumbing.
+//! - [`real::RealCeremony`] — the same
+//!   [`CeremonyCoordinator`] trait over the crate's *own* real M-of-K
+//!   cryptography (`crate::threshold`: Feldman VSS, threshold Schnorr,
+//!   group signatures that verify as standard Ed25519). Use it for
+//!   cryptographic integration tests; the ceremony *binary*
+//!   (`src/bin/ceremony.rs`) is the operator form across processes
+//!   (share files out of band, OS-entropy seeds). See
+//!   [`real`]'s module docs for the protocol mapping, the deterministic
+//!   ceremony seed and its limits, and the trust assumptions.
 //!
 //! The trait mirrors Confium's coordinator API
 //! (`cfmc_session_create`, `cfmc_session_submit_commitment`,
@@ -303,6 +316,13 @@ pub trait CeremonyCoordinator {
     fn abort_proof(&self, session: &SessionId) -> Option<&MisbehaviorProof>;
 }
 
+/// The real coordinator: the seam over the crate's threshold
+/// cryptography (Feldman VSS + threshold Schnorr partials combining
+/// into standard Ed25519 group signatures). Cryptographic integration
+/// tests and the reference for the Confium binding; the ceremony
+/// binary is the operator form. See the module docs.
+pub mod real;
+
 /// Deterministic, clearly-labelled ceremony mock (interface-only).
 ///
 /// This is **not** threshold cryptography: the "group key" is a plain
@@ -310,7 +330,8 @@ pub trait CeremonyCoordinator {
 /// signature under it. What it *does* enforce, faithfully to the seam,
 /// is the session lifecycle, the T-of-N message counts, member
 /// authentication, and identifiable abort — so trust-layer tests can
-/// drive the interface exactly as the real binding will.
+/// drive the interface exactly as the real binding will. For real
+/// cryptography behind the same trait, see [`real::RealCeremony`].
 pub mod mock {
     use super::*;
 
@@ -397,8 +418,7 @@ pub mod mock {
             commitment: Commitment,
         ) -> Result<(), CeremonyError> {
             self.live(session)?;
-            let is_member =
-                |init: &SessionInit| init.quorum.members.iter().any(|m| *m == commitment.signer);
+            let is_member = |init: &SessionInit| init.quorum.members.contains(&commitment.signer);
             let s = self
                 .sessions
                 .get_mut(session.as_str())

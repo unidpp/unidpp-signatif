@@ -40,10 +40,13 @@
 //!   [`unidpp_verdict::Verdict`] types: the three readings, coverage
 //!   reports, and time-stamped historical verification valid as-of its
 //!   anchors;
-//! - a **Confium seam** (module `confium`, feature `confium`): interface-only
-//!   trait shapes for threshold ceremonies, mirroring the Confium
-//!   session/coordinator API. The real binding is a documented
-//!   deviation: it is deferred;
+//! - a **Confium seam** (module `confium`, feature `confium`): trait
+//!   shapes for threshold ceremonies mirroring the Confium
+//!   session/coordinator API, with two implementations — the
+//!   interface-only mock for lifecycle tests, and a real bridge
+//!   ([`confium::real::RealCeremony`]) onto the crate's own threshold
+//!   cryptography. The binding to Confium itself remains a documented,
+//!   deferred deviation;
 //! - a **deployment manifest** ([`manifest`], CC/SIGNATIF §18): the
 //!   serializable declaration of a deployment's active and deprecated
 //!   algorithms, migration phase, topology profile, and scope
