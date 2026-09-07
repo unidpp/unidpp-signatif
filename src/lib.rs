@@ -62,6 +62,7 @@ pub mod graph;
 pub mod keyring;
 pub mod manifest;
 pub mod revoke;
+pub mod rollup;
 pub mod scope;
 pub mod sign;
 pub mod verify;

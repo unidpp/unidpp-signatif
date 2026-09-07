@@ -292,6 +292,8 @@ pub enum SigningDomain {
     HistoricalStamp,
     /// A quorum attestation (threshold ceremony output).
     Quorum,
+    /// A signed roll-up attestation over a committed traversal set.
+    RollupAttestation,
 }
 
 impl SigningDomain {
@@ -304,6 +306,7 @@ impl SigningDomain {
             SigningDomain::TreeHead => "UNIDPP-SIGNATIF/TREE-HEAD",
             SigningDomain::HistoricalStamp => "UNIDPP-SIGNATIF/HISTORICAL-STAMP",
             SigningDomain::Quorum => "UNIDPP-SIGNATIF/QUORUM",
+            SigningDomain::RollupAttestation => "UNIDPP-SIGNATIF/ROLLUP-ATTESTATION",
         }
     }
 }
