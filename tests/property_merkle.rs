@@ -4,11 +4,11 @@
 
 mod common;
 
+use unidpp_model::Hash;
 use unidpp_signatif::anchor::{
-    verify_consistency, verify_inclusion, leaf_hash, node_hash, InclusionProof, LogEntry,
+    leaf_hash, node_hash, verify_consistency, verify_inclusion, InclusionProof, LogEntry,
     TransparencyLog,
 };
-use unidpp_model::Hash;
 
 /// Local xorshift64* (test-only; the core's convention).
 struct Rng(u64);
@@ -86,7 +86,10 @@ fn every_inclusion_proof_verifies_and_rejects_forgeries() {
             // symmetric trees; assert failure for the overwhelming case
             // and skip exacting it on degenerate single-rung trees.
             if flipped.path.len() > 1 {
-                assert!(result.is_err(), "round {round}: flipped path must not verify");
+                assert!(
+                    result.is_err(),
+                    "round {round}: flipped path must not verify"
+                );
             }
         }
         // A wrong root fails.
@@ -156,7 +159,10 @@ fn every_consistency_proof_verifies_and_rejects_forgeries() {
                 // coincidentally symmetric trees; with random leaves it
                 // must fail. (A collision would require equal node
                 // hashes, which random 256-bit values do not produce.)
-                assert!(result.is_err(), "round {round}: reversed path must not verify");
+                assert!(
+                    result.is_err(),
+                    "round {round}: reversed path must not verify"
+                );
             }
         }
         // Shrinking consistency is refused outright.

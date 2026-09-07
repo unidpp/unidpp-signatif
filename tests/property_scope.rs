@@ -7,10 +7,8 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use unidpp_signatif::scope::{
-    DelegationScope, LayerConstraint, ScopeRequest, WindowConstraint,
-};
 use unidpp_model::{Interval, Timestamp};
+use unidpp_signatif::scope::{DelegationScope, LayerConstraint, ScopeRequest, WindowConstraint};
 
 /// Local xorshift64* (test-only; the core's convention).
 struct Rng(u64);
@@ -68,11 +66,9 @@ fn random_window(rng: &mut Rng) -> WindowConstraint {
     } else {
         let a = rng.range(0, 10_000) as i64;
         let b = a + rng.range(0, 10_000) as i64;
-        WindowConstraint::Within(Interval::between(
-            Timestamp::from_secs(a),
-            Timestamp::from_secs(b),
+        WindowConstraint::Within(
+            Interval::between(Timestamp::from_secs(a), Timestamp::from_secs(b)).unwrap(),
         )
-        .unwrap())
     }
 }
 
@@ -92,7 +88,9 @@ fn narrowed_child(rng: &mut Rng, parent: &DelegationScope) -> DelegationScope {
     if rng.bool() {
         if let LayerConstraint::Only(set) = &child.authority {
             if set.len() > 1 {
-                let drop = rng.pick(&set.clone().into_iter().collect::<Vec<_>>()).clone();
+                let drop = rng
+                    .pick(&set.clone().into_iter().collect::<Vec<_>>())
+                    .clone();
                 let mut next = set.clone();
                 next.remove(&drop);
                 child.authority = LayerConstraint::Only(next);
@@ -218,16 +216,12 @@ fn window_constraints_are_ordered() {
         }
     }
     // Concrete interval algebra.
-    let a = WindowConstraint::Within(Interval::between(
-        Timestamp::from_secs(100),
-        Timestamp::from_secs(200),
-    )
-    .unwrap());
-    let b = WindowConstraint::Within(Interval::between(
-        Timestamp::from_secs(150),
-        Timestamp::from_secs(250),
-    )
-    .unwrap());
+    let a = WindowConstraint::Within(
+        Interval::between(Timestamp::from_secs(100), Timestamp::from_secs(200)).unwrap(),
+    );
+    let b = WindowConstraint::Within(
+        Interval::between(Timestamp::from_secs(150), Timestamp::from_secs(250)).unwrap(),
+    );
     assert!(!a.entails(&b) && !b.entails(&a));
     let overlap = a.intersect(&b).unwrap();
     match overlap {

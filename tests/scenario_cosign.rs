@@ -31,8 +31,12 @@ fn same_payload_two_suites_any_allowed_accepts() {
     let report = co.verify(&dir);
     assert_eq!(report.verified_count(), 2);
     assert_eq!(report.distinct_verified_suites(), 2);
-    assert!(AcceptancePolicy::any_computed().evaluate(&report).is_accepted());
-    assert!(AcceptancePolicy::multi_signed().evaluate(&report).is_accepted());
+    assert!(AcceptancePolicy::any_computed()
+        .evaluate(&report)
+        .is_accepted());
+    assert!(AcceptancePolicy::multi_signed()
+        .evaluate(&report)
+        .is_accepted());
     // A single-suite (P256-only) jurisdiction policy accepts via the
     // P256 slot alone — policy-scoped acceptance.
     let p256_only = AcceptancePolicy::only(&[Suite::EcdsaP256]);
@@ -60,15 +64,21 @@ fn broken_slot_degrades_multi_suite_but_any_allowed_still_accepts() {
 
     let report = co.verify(&dir);
     assert_eq!(report.verified_count(), 1);
-    assert!(matches!(&report.slots[0], SlotVerdict::Invalid { key_id, .. }
-        if *key_id == *topo.issuer_key.key_id()));
+    assert!(
+        matches!(&report.slots[0], SlotVerdict::Invalid { key_id, .. }
+        if *key_id == *topo.issuer_key.key_id())
+    );
     // Any-allowed accepts via the surviving P256 slot...
-    assert!(AcceptancePolicy::any_computed().evaluate(&report).is_accepted());
+    assert!(AcceptancePolicy::any_computed()
+        .evaluate(&report)
+        .is_accepted());
     // ...but the multi-suite (lens-registry grade) policy rejects.
     let acceptance = AcceptancePolicy::multi_signed().evaluate(&report);
     assert!(!acceptance.is_accepted());
     // ...and an Ed25519-only jurisdiction rejects too.
-    assert!(!AcceptancePolicy::only(&[Suite::Ed25519]).evaluate(&report).is_accepted());
+    assert!(!AcceptancePolicy::only(&[Suite::Ed25519])
+        .evaluate(&report)
+        .is_accepted());
 }
 
 #[test]
@@ -94,10 +104,16 @@ fn framed_sm2_slot_is_deferred_and_never_fakes_verification() {
         other => panic!("expected Deferred, got {other:?}"),
     }
     assert!(!report.any_verified());
-    assert!(!AcceptancePolicy::any_computed().evaluate(&report).is_accepted());
+    assert!(!AcceptancePolicy::any_computed()
+        .evaluate(&report)
+        .is_accepted());
     // Direct slot verification states the documented deferral.
     let err = co.slots[0]
-        .verify(SigningDomain::ArtifactEvent, &body, topo.issuer_key.public())
+        .verify(
+            SigningDomain::ArtifactEvent,
+            &body,
+            topo.issuer_key.public(),
+        )
         .unwrap_err();
     match &err {
         SignatifError::SuiteDeferred { suite, detail } => {
@@ -135,7 +151,9 @@ fn tampered_payload_fails_all_suites() {
     }
     .verify(&dir);
     assert_eq!(report.verified_count(), 0);
-    assert!(!AcceptancePolicy::any_computed().evaluate(&report).is_accepted());
+    assert!(!AcceptancePolicy::any_computed()
+        .evaluate(&report)
+        .is_accepted());
 }
 
 #[test]
@@ -187,7 +205,10 @@ fn core_sig_slot_interop_preserves_framing() {
     assert_eq!(core_slot.suite, unidpp_model::SignatureSuite::EcdsaP256);
     assert_eq!(core_slot.signature.as_deref().map(|s| s.len()), Some(64));
     assert!(!core_slot.is_framed_only());
-    assert_eq!(core_slot.projected_len(), 1 + 1 + core_slot.key_id.len() + 2 + 64);
+    assert_eq!(
+        core_slot.projected_len(),
+        1 + 1 + core_slot.key_id.len() + 2 + 64
+    );
     // ...and round-trips back.
     let back = SignatureSlot::from_sig_slot(&core_slot).unwrap();
     assert_eq!(back, co.slots[0]);

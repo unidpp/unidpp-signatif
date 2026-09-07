@@ -48,7 +48,9 @@ use crate::sign::{SignatureSlot, SigningDomain, Suite};
 use crate::SignatifError;
 
 /// A ceremony session handle.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct SessionId(String);
 
 impl SessionId {
@@ -95,7 +97,9 @@ impl QuorumSpec {
             )));
         }
         if self.members.len() != BTreeSet::from_iter(self.members.iter().cloned()).len() {
-            return Err(SignatifError::invalid("duplicate quorum member".to_string()));
+            return Err(SignatifError::invalid(
+                "duplicate quorum member".to_string(),
+            ));
         }
         Ok(())
     }
@@ -249,10 +253,7 @@ impl fmt::Display for CeremonyError {
                 session,
                 attempted,
                 state,
-            } => write!(
-                f,
-                "session `{session}` is in {state:?}; cannot {attempted}"
-            ),
+            } => write!(f, "session `{session}` is in {state:?}; cannot {attempted}"),
             CeremonyError::Misbehavior(p) => write!(
                 f,
                 "identifiable abort: {} misbehaved ({})",
@@ -371,9 +372,9 @@ pub mod mock {
         type Error = CeremonyError;
 
         fn create_session(&mut self, init: SessionInit) -> Result<SessionId, CeremonyError> {
-            init.quorum.validate().map_err(|e| {
-                CeremonyError::Framework(format!("quorum validation failed: {e}"))
-            })?;
+            init.quorum
+                .validate()
+                .map_err(|e| CeremonyError::Framework(format!("quorum validation failed: {e}")))?;
             self.counter += 1;
             let id = SessionId::new(&format!("mock-{}-{}", init.quorum.quorum_id, self.counter))
                 .map_err(|e| CeremonyError::Framework(e.to_string()))?;
@@ -396,9 +397,8 @@ pub mod mock {
             commitment: Commitment,
         ) -> Result<(), CeremonyError> {
             self.live(session)?;
-            let is_member = |init: &SessionInit| {
-                init.quorum.members.iter().any(|m| *m == commitment.signer)
-            };
+            let is_member =
+                |init: &SessionInit| init.quorum.members.iter().any(|m| *m == commitment.signer);
             let s = self
                 .sessions
                 .get_mut(session.as_str())
@@ -409,13 +409,11 @@ pub mod mock {
                     offense: "commitment from non-member".into(),
                     evidence: commitment.transcript.clone(),
                 });
-                return Err(CeremonyError::Misbehavior(
-                    Box::new(MisbehaviorProof {
-                        offender: commitment.signer,
-                        offense: "commitment from non-member".into(),
-                        evidence: commitment.transcript,
-                    }),
-                ));
+                return Err(CeremonyError::Misbehavior(Box::new(MisbehaviorProof {
+                    offender: commitment.signer,
+                    offense: "commitment from non-member".into(),
+                    evidence: commitment.transcript,
+                })));
             }
             if s.committed.contains_key(commitment.signer.as_str()) {
                 return Err(CeremonyError::Misbehavior(Box::new(MisbehaviorProof {
@@ -432,11 +430,7 @@ pub mod mock {
             Ok(())
         }
 
-        fn submit_share(
-            &mut self,
-            session: &SessionId,
-            share: Share,
-        ) -> Result<(), CeremonyError> {
+        fn submit_share(&mut self, session: &SessionId, share: Share) -> Result<(), CeremonyError> {
             self.live(session)?;
             let s = self
                 .sessions
@@ -448,13 +442,11 @@ pub mod mock {
                     offense: "share without a round-1 commitment".into(),
                     evidence: share.material.clone(),
                 });
-                return Err(CeremonyError::Misbehavior(Box::new(
-                    MisbehaviorProof {
-                        offender: share.signer,
-                        offense: "share without a round-1 commitment".into(),
-                        evidence: share.material,
-                    },
-                )));
+                return Err(CeremonyError::Misbehavior(Box::new(MisbehaviorProof {
+                    offender: share.signer,
+                    offense: "share without a round-1 commitment".into(),
+                    evidence: share.material,
+                })));
             }
             if s.shares.contains_key(share.signer.as_str()) {
                 return Err(CeremonyError::Misbehavior(Box::new(MisbehaviorProof {
@@ -501,7 +493,9 @@ pub mod mock {
         }
 
         fn abort_proof(&self, session: &SessionId) -> Option<&MisbehaviorProof> {
-            self.sessions.get(session.as_str()).and_then(|s| s.abort.as_ref())
+            self.sessions
+                .get(session.as_str())
+                .and_then(|s| s.abort.as_ref())
         }
     }
 }

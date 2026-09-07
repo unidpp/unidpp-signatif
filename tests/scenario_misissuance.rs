@@ -32,11 +32,11 @@ use common::{battery_request, pid, record_issuance, t, topology, T0};
 
 use unidpp_signatif::graph::NodeId;
 use unidpp_signatif::keyring::KeyPair;
-use unidpp_signatif::sign::Suite;
 use unidpp_signatif::revoke::{
     IssuanceIndex, QuorumAttestation, Revocation, RevocationLedger, RevocationReason,
     RevokedSubject, Standing,
 };
+use unidpp_signatif::sign::Suite;
 use unidpp_signatif::sign::{AcceptancePolicy, SignatureSlot, SigningDomain};
 use unidpp_signatif::verify::{HistoricalStanding, SignatifVerifier, VerificationTarget};
 use unidpp_transform::ProvenanceGraph;
@@ -91,13 +91,8 @@ fn declare_misissuance(w: &mut World) {
     };
     let members = quorum_members();
     let refs: Vec<&KeyPair> = members.iter().collect();
-    let att = QuorumAttestation::mint_sign(
-        &rev.declared_by,
-        2,
-        &rev.statement_bytes(),
-        &refs,
-    )
-    .unwrap();
+    let att =
+        QuorumAttestation::mint_sign(&rev.declared_by, 2, &rev.statement_bytes(), &refs).unwrap();
     rev.quorum = Some(att);
     w.ledger.declare(rev).unwrap();
 }
@@ -163,7 +158,8 @@ fn retroactive_declaration_voids_in_window_and_revalidates_outside() {
     record_issuance(&mut w.issuers, &bad, T_BAD, &w.topo.issuer_key);
     record_issuance(&mut w.issuers, &derived, T_DERIVED, &w.topo.issuer_key);
     // pack-derived is combined from battery-bad: transitive binding.
-    w.provenance.record_combine(derived.clone(), std::slice::from_ref(&bad));
+    w.provenance
+        .record_combine(derived.clone(), std::slice::from_ref(&bad));
 
     // Pre-declaration: all valid.
     assert!(verdict_for(&w, &log_bad, T_VERIFY).accepted());
@@ -173,13 +169,12 @@ fn retroactive_declaration_voids_in_window_and_revalidates_outside() {
     // In-window artifact: void ab initio NOW, even though its
     // verification at T_VERIFY was timestamped and passed.
     let v_bad = verdict_for(&w, &log_bad, T_NOW);
-    assert!(!v_bad.accepted(), "in-window misissued artifact must fail now");
+    assert!(
+        !v_bad.accepted(),
+        "in-window misissued artifact must fail now"
+    );
     assert!(v_bad.voids_ab_initio(), "must void ab initio");
-    assert!(v_bad
-        .verdict
-        .current_state
-        .taints
-        .voids_ab_initio());
+    assert!(v_bad.verdict.current_state.taints.voids_ab_initio());
     // The key's standing is void inside the window and re-validated
     // outside it.
     assert_eq!(
@@ -247,7 +242,13 @@ fn historical_stamps_retroactively_invalidated_but_evidence_stands() {
         .verify_historical(&log_bad, t(T_VERIFY), &w.issuers, &w.provenance, &w.notary)
         .unwrap();
     let hist_clean = verifier
-        .verify_historical(&log_clean, t(T_VERIFY), &w.issuers, &w.provenance, &w.notary)
+        .verify_historical(
+            &log_clean,
+            t(T_VERIFY),
+            &w.issuers,
+            &w.provenance,
+            &w.notary,
+        )
         .unwrap();
     assert_eq!(hist_bad.as_of, t(T_VERIFY));
     assert_eq!(
@@ -258,11 +259,15 @@ fn historical_stamps_retroactively_invalidated_but_evidence_stands() {
     // Both passed at the time (evidentiary pass).
     assert!(matches!(
         hist_bad.still_stands(&w.ledger, &w.issuers, &w.provenance),
-        HistoricalStanding::Stands { evidentiary_pass: true }
+        HistoricalStanding::Stands {
+            evidentiary_pass: true
+        }
     ));
     assert!(matches!(
         hist_clean.still_stands(&w.ledger, &w.issuers, &w.provenance),
-        HistoricalStanding::Stands { evidentiary_pass: true }
+        HistoricalStanding::Stands {
+            evidentiary_pass: true
+        }
     ));
 
     // The retroactive declaration lands.
@@ -366,6 +371,8 @@ fn notarized_stamp_is_domain_separated() {
         &hist.state_hash,
     );
     let replay = SignatureSlot::sign(&w.notary, SigningDomain::TreeHead, &stamp).unwrap();
-    assert!(replay.verify(SigningDomain::HistoricalStamp, &stamp, w.notary.public()).is_err());
+    assert!(replay
+        .verify(SigningDomain::HistoricalStamp, &stamp, w.notary.public())
+        .is_err());
     assert_ne!(replay.signature, hist.notary.signature);
 }

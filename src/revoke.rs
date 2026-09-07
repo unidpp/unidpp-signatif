@@ -330,9 +330,7 @@ impl IssuanceIndex {
 
     /// The (moment, key) of a passport's issuance.
     pub fn issuance_of(&self, passport: &PassportId) -> Option<(Timestamp, &KeyId)> {
-        self.issuances
-            .get(passport)
-            .map(|(t, k)| (*t, k))
+        self.issuances.get(passport).map(|(t, k)| (*t, k))
     }
 
     /// All recorded passports.
@@ -376,15 +374,16 @@ impl RevocationLedger {
     /// Declarations against a subject (key-level declarations match both
     /// `Key` and the `Node` that owns it, via the node map).
     fn against_key<'a>(&'a self, key_id: &'a KeyId) -> impl Iterator<Item = &'a Revocation> {
-        self.revocations
-            .iter()
-            .filter(move |r| match &r.subject {
-                RevokedSubject::Key(k) => k == key_id,
-                _ => false,
-            })
+        self.revocations.iter().filter(move |r| match &r.subject {
+            RevokedSubject::Key(k) => k == key_id,
+            _ => false,
+        })
     }
 
-    fn against_passport<'a>(&'a self, passport: &'a PassportId) -> impl Iterator<Item = &'a Revocation> {
+    fn against_passport<'a>(
+        &'a self,
+        passport: &'a PassportId,
+    ) -> impl Iterator<Item = &'a Revocation> {
         self.revocations
             .iter()
             .filter(move |r| matches!(&r.subject, RevokedSubject::Passport(p) if p == passport))
@@ -393,7 +392,12 @@ impl RevocationLedger {
     /// Standing of a key's acts at `at`, restricted to declarations
     /// made by `known_by` (the evidentiary cutoff; pass `None` for the
     /// current-state reading over all declarations).
-    pub fn key_standing_at(&self, key_id: &KeyId, at: Timestamp, known_by: Option<Timestamp>) -> Standing {
+    pub fn key_standing_at(
+        &self,
+        key_id: &KeyId,
+        at: Timestamp,
+        known_by: Option<Timestamp>,
+    ) -> Standing {
         let mut standing = Standing::Valid;
         for r in self.against_key(key_id) {
             if let Some(cutoff) = known_by {
@@ -420,8 +424,7 @@ impl RevocationLedger {
             };
             // Void ab initio dominates; suspended dominates valid.
             let dominates = matches!(standing, Standing::Valid)
-                || (matches!(standing, Standing::SuspendedFrom { .. })
-                    && next.voids_ab_initio());
+                || (matches!(standing, Standing::SuspendedFrom { .. }) && next.voids_ab_initio());
             if dominates {
                 standing = next;
             }
@@ -554,7 +557,10 @@ mod tests {
         PassportId::new(&format!("urn:unidpp:passport:b{n}")).unwrap()
     }
 
-    fn quorum_for(statement: &[u8], n_members: usize) -> (QuorumAttestation, crate::graph::KeyDirectory) {
+    fn quorum_for(
+        statement: &[u8],
+        n_members: usize,
+    ) -> (QuorumAttestation, crate::graph::KeyDirectory) {
         let quorum = NodeId::new("super-quorum").unwrap();
         let members: Vec<KeyPair> = (0..n_members)
             .map(|i| KeyPair::seeded(Suite::Ed25519, format!("sq-{i}").as_bytes()).unwrap())
@@ -646,7 +652,9 @@ mod tests {
         ledger.declare(retro).unwrap_err(); // no quorum; use Misissuance w/ quorum below
         let mut retro2 = Revocation {
             subject: RevokedSubject::Key(key.clone()),
-            reason: RevocationReason::AuthorityCompromised { detected_at: t(1000) },
+            reason: RevocationReason::AuthorityCompromised {
+                detected_at: t(1000),
+            },
             declared_at: t(1000),
             window: Interval::between(t(100), t(200)).unwrap(),
             declared_by: NodeId::new("super").unwrap(),
@@ -716,20 +724,28 @@ mod tests {
         ledger.declare(retro).unwrap();
 
         // B0: issued inside window -> void ab initio.
-        assert!(ledger.current_taints(&pid(0), &issuers, &provenance).voids_ab_initio());
+        assert!(ledger
+            .current_taints(&pid(0), &issuers, &provenance)
+            .voids_ab_initio());
         // B1: transitively bound to B0 -> cascading void.
-        assert!(ledger.current_taints(&pid(1), &issuers, &provenance).voids_ab_initio());
+        assert!(ledger
+            .current_taints(&pid(1), &issuers, &provenance)
+            .voids_ab_initio());
         // Evidentiary: at t(170) nothing was declared.
         assert!(!ledger
             .taints_known_at(&pid(0), &issuers, &provenance, t(170))
             .voids_ab_initio());
         // A passport issued by the same key AFTER the window is re-validated.
         issuers.record(pid(2), t(500), bad_key.key_id().clone());
-        assert!(!ledger.current_taints(&pid(2), &issuers, &provenance).voids_ab_initio());
+        assert!(!ledger
+            .current_taints(&pid(2), &issuers, &provenance)
+            .voids_ab_initio());
         // ...but if it was built from tainted material, it is tainted
         // anyway (transitive binding).
         provenance.record_combine(pid(3), &[pid(1)]);
         issuers.record(pid(3), t(600), bad_key.key_id().clone());
-        assert!(ledger.current_taints(&pid(3), &issuers, &provenance).voids_ab_initio());
+        assert!(ledger
+            .current_taints(&pid(3), &issuers, &provenance)
+            .voids_ab_initio());
     }
 }

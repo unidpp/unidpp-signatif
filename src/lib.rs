@@ -160,7 +160,10 @@ impl fmt::Display for SignatifError {
                 "no delegation path from any anchored root to key `{key_id}`"
             ),
             SignatifError::ScopeExcluded { key_id, detail } => {
-                write!(f, "path to key `{key_id}` exists but scope excludes the request: {detail}")
+                write!(
+                    f,
+                    "path to key `{key_id}` exists but scope excludes the request: {detail}"
+                )
             }
             SignatifError::CredentialSignatureInvalid { parent, child } => write!(
                 f,

@@ -77,9 +77,7 @@ impl LayerConstraint {
         match (self, subset) {
             (LayerConstraint::Any, _) => true,
             (LayerConstraint::Only(_), LayerConstraint::Any) => false,
-            (LayerConstraint::Only(outer), LayerConstraint::Only(inner)) => {
-                inner.is_subset(outer)
-            }
+            (LayerConstraint::Only(outer), LayerConstraint::Only(inner)) => inner.is_subset(outer),
         }
     }
 
@@ -251,7 +249,8 @@ impl DelegationScope {
     /// an intersection is empty.
     pub fn narrow(&self, child: &DelegationScope) -> Result<DelegationScope, SignatifError> {
         let details = [
-            self.authority.mismatch_detail(&child.authority, SCOPE_LAYERS[0]),
+            self.authority
+                .mismatch_detail(&child.authority, SCOPE_LAYERS[0]),
             self.profile_version
                 .mismatch_detail(&child.profile_version, SCOPE_LAYERS[1]),
             self.product_group
@@ -442,18 +441,15 @@ mod tests {
             .profile_version(["urn:unidpp:profile:eu-batt@3"])
             .product_group(["batteries"])
             .within(Interval::between(t(0), t(1000)).unwrap());
-        let ok = ScopeRequest::new(
-            "eu",
-            "urn:unidpp:profile:eu-batt@3",
-            "batteries",
-            t(500),
-        );
+        let ok = ScopeRequest::new("eu", "urn:unidpp:profile:eu-batt@3", "batteries", t(500));
         assert!(scope.matches(&ok));
         assert_eq!(scope.rejecting_layer(&ok), None);
-        let wrong_group = ScopeRequest::new("eu", "urn:unidpp:profile:eu-batt@3", "textiles", t(500));
+        let wrong_group =
+            ScopeRequest::new("eu", "urn:unidpp:profile:eu-batt@3", "textiles", t(500));
         assert!(!scope.matches(&wrong_group));
         assert_eq!(scope.rejecting_layer(&wrong_group), Some("product-group"));
-        let too_late = ScopeRequest::new("eu", "urn:unidpp:profile:eu-batt@3", "batteries", t(5000));
+        let too_late =
+            ScopeRequest::new("eu", "urn:unidpp:profile:eu-batt@3", "batteries", t(5000));
         assert_eq!(scope.rejecting_layer(&too_late), Some("window"));
     }
 }

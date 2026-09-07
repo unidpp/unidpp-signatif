@@ -15,7 +15,7 @@ use unidpp_signatif::confium::{
     CeremonyCoordinator, CeremonyError, CeremonyKind, CeremonyStatement, Commitment, QuorumSpec,
     SessionInit, SessionState, Share,
 };
-use unidpp_signatif::graph::{NodeId, NodeKind, RegisteredKey, DelegationNode};
+use unidpp_signatif::graph::{DelegationNode, NodeId, NodeKind, RegisteredKey};
 use unidpp_signatif::scope::DelegationScope;
 use unidpp_signatif::sign::Suite;
 
@@ -220,7 +220,10 @@ fn unlock_window_expires_incomplete_sessions() {
         ),
         Err(CeremonyError::Expired)
     ));
-    assert!(matches!(ceremony.aggregate(&id), Err(CeremonyError::Expired)));
+    assert!(matches!(
+        ceremony.aggregate(&id),
+        Err(CeremonyError::Expired)
+    ));
 }
 
 #[test]

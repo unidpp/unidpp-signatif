@@ -110,10 +110,10 @@ impl<'de> serde::Deserialize<'de> for PublicKey {
             .ok_or_else(|| serde::de::Error::custom(format!("bad public key `{s}`")))?;
         let suite = Suite::from_str(suite)
             .map_err(|e: SignatifError| serde::de::Error::custom(e.to_string()))?;
-        let bytes =
-            hex_decode(hex).ok_or_else(|| serde::de::Error::custom(format!("bad public key bytes `{s}`")))?;
-        let public = PublicKey::from_bytes(&bytes)
-            .map_err(|e| serde::de::Error::custom(e.to_string()))?;
+        let bytes = hex_decode(hex)
+            .ok_or_else(|| serde::de::Error::custom(format!("bad public key bytes `{s}`")))?;
+        let public =
+            PublicKey::from_bytes(&bytes).map_err(|e| serde::de::Error::custom(e.to_string()))?;
         if public.suite() != suite {
             return Err(serde::de::Error::custom(format!(
                 "key claims suite {suite} but bytes are {}",
@@ -130,9 +130,7 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
         return None;
     }
     (0..s.len() / 2)
-        .map(|i| {
-            u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok()
-        })
+        .map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).ok())
         .collect()
 }
 
@@ -144,16 +142,15 @@ impl fmt::Display for PublicKey {
 
 /// A key identifier: content-derived, pins exactly one public key and
 /// suite (`k-` + first 16 hex chars of `H(suite-code || public-key)`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct KeyId(String);
 
 impl KeyId {
     /// Derive the id of a public key.
     pub fn of(public: &PublicKey) -> KeyId {
-        let digest = sha256(&[
-            &[public.suite().code()],
-            public.as_bytes(),
-        ]);
+        let digest = sha256(&[&[public.suite().code()], public.as_bytes()]);
         KeyId(format!("k-{}", &digest.hex()[..16]))
     }
 
@@ -215,8 +212,7 @@ impl KeyPair {
                 let sk = P256SigningKey::from_bytes(&FieldBytes::from(scalar))
                     .map_err(|e| SignatifError::crypto(format!("bad P-256 scalar: {e}")))?;
                 let point = sk.verifying_key().to_encoded_point(false);
-                let public =
-                    PublicKey::EcdsaP256Uncompressed(point.as_bytes().try_into().unwrap());
+                let public = PublicKey::EcdsaP256Uncompressed(point.as_bytes().try_into().unwrap());
                 Ok(KeyPair {
                     suite,
                     key_id: KeyId::of(&public),
@@ -280,9 +276,8 @@ impl KeyPair {
             }
             PublicKey::EcdsaP256Uncompressed(_) => {
                 let vk = public.p256()?;
-                let sig = P256Signature::from_slice(signature).map_err(|e| {
-                    SignatifError::crypto(format!("bad ECDSA-P256 signature: {e}"))
-                })?;
+                let sig = P256Signature::from_slice(signature)
+                    .map_err(|e| SignatifError::crypto(format!("bad ECDSA-P256 signature: {e}")))?;
                 P256Verifier::verify(&vk, payload, &sig)
                     .map_err(|_| SignatifError::crypto("ECDSA-P256 signature invalid".to_string()))
             }

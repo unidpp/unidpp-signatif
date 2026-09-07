@@ -8,9 +8,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use unidpp_event::{EventLog, EventPayload, EventType, TypedEvent};
-use unidpp_model::{
-    Interval, PassportId, SignatureSuite, Timestamp, TrustMarker,
-};
+use unidpp_model::{Interval, PassportId, SignatureSuite, Timestamp, TrustMarker};
 use unidpp_transform::ProvenanceGraph;
 
 use unidpp_signatif::graph::{
@@ -20,7 +18,7 @@ use unidpp_signatif::graph::{
 use unidpp_signatif::keyring::{KeyPair, PublicKey};
 use unidpp_signatif::revoke::{IssuanceIndex, RevocationLedger};
 use unidpp_signatif::scope::{DelegationScope, ScopeRequest};
-use unidpp_signatif::sign::{Suite, SigningDomain};
+use unidpp_signatif::sign::{SigningDomain, Suite};
 use unidpp_signatif::SignatifError;
 
 pub fn t(secs: i64) -> Timestamp {
@@ -90,8 +88,7 @@ pub fn topology() -> Topology {
         .product_group(["batteries"])
         .within(Interval::starting(t(T0)));
 
-    let mut hop1 =
-        DelegationCredential::mint_sign(&root, &notified, wide, &root_key).unwrap();
+    let mut hop1 = DelegationCredential::mint_sign(&root, &notified, wide, &root_key).unwrap();
     // Multi-suite co-signed delegation (the lens-registry discipline).
     hop1.co_sign_by(&root_key).unwrap();
     let hop2 = DelegationCredential::mint_sign(&notified, &issuer, narrow, &notified_key).unwrap();
@@ -107,9 +104,7 @@ pub fn topology() -> Topology {
     for i in 1..=3u8 {
         let id = NodeId::new(&format!("witness-{i}")).unwrap();
         let key = KeyPair::seeded(Suite::Ed25519, format!("scenario/w{i}").as_bytes()).unwrap();
-        attestations.push(
-            WitnessAttestation::mint_sign(&id, &root, t(T0), &key).unwrap(),
-        );
+        attestations.push(WitnessAttestation::mint_sign(&id, &root, t(T0), &key).unwrap());
         witnesses.insert(id.clone(), *key.public());
         witness_keys.insert(id, key);
     }
@@ -139,12 +134,7 @@ pub fn topology() -> Topology {
 
 /// The scope request an EU battery verification makes.
 pub fn battery_request(at: Timestamp) -> ScopeRequest {
-    ScopeRequest::new(
-        "eu",
-        "urn:unidpp:profile:eu-batt@3",
-        "batteries",
-        at,
-    )
+    ScopeRequest::new("eu", "urn:unidpp:profile:eu-batt@3", "batteries", at)
 }
 
 /// An event log for one passport: an issuance by `issuer_key` at `at`,
@@ -184,12 +174,7 @@ pub fn passport_log(subject: &PassportId, at: i64, issuer_actor: &str) -> EventL
 }
 
 /// The issuance index entry for a passport log signed by `key`.
-pub fn record_issuance(
-    index: &mut IssuanceIndex,
-    subject: &PassportId,
-    at: i64,
-    key: &KeyPair,
-) {
+pub fn record_issuance(index: &mut IssuanceIndex, subject: &PassportId, at: i64, key: &KeyPair) {
     index.record(subject.clone(), t(at), key.key_id().clone());
 }
 

@@ -118,10 +118,7 @@ impl Suite {
     pub fn signature_len(self) -> usize {
         match self {
             Suite::Ed25519 => 64,
-            other => other
-                .to_core()
-                .map(|c| c.signature_len())
-                .unwrap_or(64),
+            other => other.to_core().map(|c| c.signature_len()).unwrap_or(64),
         }
     }
 
@@ -380,13 +377,11 @@ impl CoSignature {
                             key_id: slot.key_id.clone(),
                         }
                     }
-                    Err(SignatifError::SuiteDeferred { suite, detail }) => {
-                        SlotVerdict::Deferred {
-                            suite,
-                            key_id: slot.key_id.clone(),
-                            detail,
-                        }
-                    }
+                    Err(SignatifError::SuiteDeferred { suite, detail }) => SlotVerdict::Deferred {
+                        suite,
+                        key_id: slot.key_id.clone(),
+                        detail,
+                    },
                     Err(e) => SlotVerdict::Invalid {
                         suite: slot.suite,
                         key_id: slot.key_id.clone(),

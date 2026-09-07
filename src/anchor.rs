@@ -169,7 +169,10 @@ impl TransparencyLog {
     }
 
     fn leaf_hashes(&self) -> Vec<Hash> {
-        self.entries.iter().map(|e| leaf_hash(&e.commitment)).collect()
+        self.entries
+            .iter()
+            .map(|e| leaf_hash(&e.commitment))
+            .collect()
     }
 
     /// The current tree root (None for an empty log).
@@ -295,7 +298,12 @@ impl SignedTreeHead {
     pub fn verify(&self, operator: &PublicKey) -> Result<(), SignatifError> {
         self.signature.verify(
             SigningDomain::TreeHead,
-            &SignedTreeHead::canonical_bytes(&self.log_id, self.tree_size, self.timestamp, &self.root),
+            &SignedTreeHead::canonical_bytes(
+                &self.log_id,
+                self.tree_size,
+                self.timestamp,
+                &self.root,
+            ),
             operator,
         )
     }
@@ -646,18 +654,12 @@ mod tests {
         assert_eq!(mth(&l1), Some(leaf_hash(&entry(0))));
         // n=2: root = H(0x02 || MTH(l0) || MTH(l1)) with MTH(li)=H(0x01||li).
         let l2 = leaves(2);
-        assert_eq!(
-            mth(&l2),
-            Some(node_hash(&l2[0], &l2[1]))
-        );
+        assert_eq!(mth(&l2), Some(node_hash(&l2[0], &l2[1])));
         // n=3: root = H(0x02 || MTH(D[0:2]) || MTH(D[2:3]))
         let l3 = leaves(3);
         assert_eq!(
             mth(&l3),
-            Some(node_hash(
-                &mth(&l3[..2]).unwrap(),
-                &mth(&l3[2..]).unwrap()
-            ))
+            Some(node_hash(&mth(&l3[..2]).unwrap(), &mth(&l3[2..]).unwrap()))
         );
     }
 
@@ -731,7 +733,9 @@ mod tests {
                 );
                 // Corrupt the old root.
                 let bad_old = sha256(&[b"nope"]);
-                assert!(verify_consistency(m as u64, &bad_old, n as u64, &new_root, &path).is_err());
+                assert!(
+                    verify_consistency(m as u64, &bad_old, n as u64, &new_root, &path).is_err()
+                );
                 // Corrupt the new root.
                 assert!(
                     verify_consistency(m as u64, &old_root, n as u64, &bad_old, &path).is_err()
@@ -760,7 +764,12 @@ mod tests {
         for seq in 0..6u64 {
             let proof = log.inclusion_proof(seq).unwrap();
             assert_eq!(proof.tree_size, 6);
-            assert!(verify_inclusion(&log.entry(seq).unwrap().commitment, &proof, &log.root().unwrap()).is_ok());
+            assert!(verify_inclusion(
+                &log.entry(seq).unwrap().commitment,
+                &proof,
+                &log.root().unwrap()
+            )
+            .is_ok());
         }
         for old in 1..=6u64 {
             let p = log.consistency_proof(old).unwrap();
@@ -781,7 +790,9 @@ mod tests {
             log.append(LogEntry::public(sha256(&[&[i]])));
         }
         let operator = KeyPair::seeded(Suite::Ed25519, b"op").unwrap();
-        let sth = log.sign_tree_head(Timestamp::from_secs(1234), &operator).unwrap();
+        let sth = log
+            .sign_tree_head(Timestamp::from_secs(1234), &operator)
+            .unwrap();
         assert!(sth.verify(operator.public()).is_ok());
         // Different operator.
         let other = KeyPair::seeded(Suite::EcdsaP256, b"op2").unwrap();
@@ -799,7 +810,9 @@ mod tests {
         // proof ties the pinned root to the new head.
         let new_root = log.root().unwrap();
         assert_ne!(old_root, new_root);
-        let sth2 = log.sign_tree_head(Timestamp::from_secs(1235), &operator).unwrap();
+        let sth2 = log
+            .sign_tree_head(Timestamp::from_secs(1235), &operator)
+            .unwrap();
         assert_eq!(sth2.root, new_root);
         assert_ne!(sth.root, sth2.root);
         let proof = log.consistency_proof(4).unwrap();
@@ -830,9 +843,21 @@ mod tests {
         let master_root = lol.root().unwrap();
 
         let items = vec![
-            (sth1.clone(), *k1.public(), lol.witness_proof(&sth1).unwrap()),
-            (sth2.clone(), *k2.public(), lol.witness_proof(&sth2).unwrap()),
-            (sth3.clone(), *k3.public(), lol.witness_proof(&sth3).unwrap()),
+            (
+                sth1.clone(),
+                *k1.public(),
+                lol.witness_proof(&sth1).unwrap(),
+            ),
+            (
+                sth2.clone(),
+                *k2.public(),
+                lol.witness_proof(&sth2).unwrap(),
+            ),
+            (
+                sth3.clone(),
+                *k3.public(),
+                lol.witness_proof(&sth3).unwrap(),
+            ),
         ];
         assert!(verify_master_quorum(&master_root, &items, 3).unwrap());
         // 2-of-3 holds with one witness dropped.
@@ -845,8 +870,16 @@ mod tests {
         // The same witness attesting twice does not double-count: the
         // distinct-log set is keyed by log id.
         let dupe = vec![
-            (sth1.clone(), *k1.public(), lol.witness_proof(&sth1).unwrap()),
-            (sth1.clone(), *k1.public(), lol.witness_proof(&sth1).unwrap()),
+            (
+                sth1.clone(),
+                *k1.public(),
+                lol.witness_proof(&sth1).unwrap(),
+            ),
+            (
+                sth1.clone(),
+                *k1.public(),
+                lol.witness_proof(&sth1).unwrap(),
+            ),
         ];
         assert!(!verify_master_quorum(&master_root, &dupe, 2).unwrap());
     }
@@ -867,4 +900,3 @@ mod tests {
         assert!(json.contains("\"salt_ref\":0"));
     }
 }
-

@@ -44,9 +44,7 @@ fn artifact_head_anchored_through_inclusion_and_sth() {
         tlog.append(LogEntry::salted(commitment, i as u64));
     }
     let seq = tlog.append(LogEntry::public(head));
-    let sth = tlog
-        .sign_tree_head(t(T0 + 120), &operator)
-        .unwrap();
+    let sth = tlog.sign_tree_head(t(T0 + 120), &operator).unwrap();
 
     // The verifier pins the STH and checks the artifact head's
     // inclusion, deriving the anchor the core verdict will pin.
@@ -64,11 +62,7 @@ fn artifact_head_anchored_through_inclusion_and_sth() {
     assert!(anchor_from_inclusion(&head, &other_proof, &sth).is_err());
 
     // The pipeline with the derived anchor: fully anchored verdict.
-    let co = common::cosign_issuance_two(
-        &log,
-        &topo.issuer_key,
-        Some(&topo.issuer_key_alt),
-    );
+    let co = common::cosign_issuance_two(&log, &topo.issuer_key, Some(&topo.issuer_key_alt));
     let verifier = SignatifVerifier {
         graph: &topo.graph,
         bundle: &topo.bundle,
@@ -171,9 +165,10 @@ fn log_of_logs_m_of_k_master_anchoring() {
         let id = format!("witness-{i}");
         let operator = witness_operator(&id);
         let mut log = TransparencyLog::new(&id);
-        log.append(LogEntry::public(unidpp_model::sha256(&[
-            format!("noise-{i}").as_bytes(),
-        ])));
+        log.append(LogEntry::public(unidpp_model::sha256(&[format!(
+            "noise-{i}"
+        )
+        .as_bytes()])));
         log.append(LogEntry::public(head));
         let sth = log.sign_tree_head(t(2000), &operator).unwrap();
         logs.push(log);
@@ -187,7 +182,11 @@ fn log_of_logs_m_of_k_master_anchoring() {
     }
     let master_root = lol.root().unwrap();
 
-    let items: Vec<(SignedTreeHead, unidpp_signatif::keyring::PublicKey, unidpp_signatif::anchor::InclusionProof)> = sths
+    let items: Vec<(
+        SignedTreeHead,
+        unidpp_signatif::keyring::PublicKey,
+        unidpp_signatif::anchor::InclusionProof,
+    )> = sths
         .iter()
         .zip(operators.iter())
         .map(|(sth, op)| (sth.clone(), *op.public(), lol.witness_proof(sth).unwrap()))
@@ -201,10 +200,7 @@ fn log_of_logs_m_of_k_master_anchoring() {
     // fails and the quorum collapses to the honest witnesses.
     let mut evil = items[0].0.clone();
     evil.root = unidpp_model::sha256(&[b"evil"]);
-    let evil_items = vec![
-        (evil, items[0].1, items[0].2.clone()),
-        items[1].clone(),
-    ];
+    let evil_items = vec![(evil, items[0].1, items[0].2.clone()), items[1].clone()];
     assert!(verify_master_quorum(&master_root, &evil_items, 2).is_err());
     // The master log is append-only: anchoring a further STH keeps the
     // old master root consistent via a consistency proof.
@@ -213,9 +209,7 @@ fn log_of_logs_m_of_k_master_anchoring() {
     lol.append_witness_sth(&extra);
     let new_master_root = lol.root().unwrap();
     let proof = lol.log.consistency_proof(3).unwrap();
-    assert!(
-        verify_consistency(3, &old_master_root, 4, &new_master_root, &proof.path).is_ok()
-    );
+    assert!(verify_consistency(3, &old_master_root, 4, &new_master_root, &proof.path).is_ok());
 }
 
 #[test]

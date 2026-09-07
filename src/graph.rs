@@ -35,7 +35,9 @@ use crate::sign::{canonical_fields, SignatureSlot, SigningDomain};
 use crate::SignatifError;
 
 /// A trust-graph node identifier (normalized lowercase slug).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 pub struct NodeId(String);
 
 impl NodeId {
@@ -183,7 +185,11 @@ impl DelegationCredential {
             scope,
             signatures: Vec::new(),
         };
-        let slot = SignatureSlot::sign(parent_key, SigningDomain::Delegation, &cred.canonical_bytes())?;
+        let slot = SignatureSlot::sign(
+            parent_key,
+            SigningDomain::Delegation,
+            &cred.canonical_bytes(),
+        )?;
         cred.signatures.push(slot);
         Ok(cred)
     }
@@ -191,8 +197,11 @@ impl DelegationCredential {
     /// Append another parent signature slot (multi-suite co-signed
     /// delegation).
     pub fn co_sign_by(&mut self, parent_key: &KeyPair) -> Result<(), SignatifError> {
-        let slot =
-            SignatureSlot::sign(parent_key, SigningDomain::Delegation, &self.canonical_bytes())?;
+        let slot = SignatureSlot::sign(
+            parent_key,
+            SigningDomain::Delegation,
+            &self.canonical_bytes(),
+        )?;
         self.signatures.push(slot);
         Ok(())
     }
@@ -428,10 +437,7 @@ impl AnchorBundle {
     /// Whether the bundle anchors `node` at `at`: a trust list in force
     /// AND a quorate master-list entry (M-of-K witnesses).
     pub fn accepts_root(&self, node: &NodeId, at: Timestamp) -> Result<(), SignatifError> {
-        let listed = self
-            .trust_lists
-            .iter()
-            .any(|l| l.accepts_at(node, at));
+        let listed = self.trust_lists.iter().any(|l| l.accepts_at(node, at));
         if !listed {
             return Err(SignatifError::Trust(format!(
                 "root `{node}` is not in any trust list in force at {at}"
@@ -528,6 +534,19 @@ impl TrustGraph {
     /// The node with this id.
     pub fn node(&self, id: &NodeId) -> Option<&DelegationNode> {
         self.nodes.get(id)
+    }
+
+    /// All nodes (in id order).
+    pub fn nodes(&self) -> impl Iterator<Item = &DelegationNode> {
+        self.nodes.values()
+    }
+
+    /// Mutable node lookup (used by services that merge keys onto an
+    /// existing node without going through `add_node`, which is
+    /// idempotent and ignores subsequent inserts). Returns `None`
+    /// when the node does not exist.
+    pub fn node_mut(&mut self, id: &NodeId) -> Option<&mut DelegationNode> {
+        self.nodes.get_mut(id)
     }
 
     /// Node count.
@@ -700,11 +719,11 @@ impl TrustGraph {
         request: &ScopeRequest,
         bundle: &AnchorBundle,
     ) -> Result<TrustPath, SignatifError> {
-        let end = self.node_for_key(key_id).ok_or_else(|| {
-            SignatifError::NoTrustPath {
+        let end = self
+            .node_for_key(key_id)
+            .ok_or_else(|| SignatifError::NoTrustPath {
                 key_id: key_id.to_string(),
-            }
-        })?;
+            })?;
 
         let mut best_failure: Option<SignatifError> = None;
         let note = |err: SignatifError, best: &mut Option<SignatifError>| {
@@ -859,7 +878,9 @@ mod tests {
             ],
         };
         // A third attestation with the wrong key must not count.
-        entry.attestations.push(WitnessAttestation::mint_sign(&w3, &fx.root, t(0), &k1).unwrap());
+        entry
+            .attestations
+            .push(WitnessAttestation::mint_sign(&w3, &fx.root, t(0), &k1).unwrap());
         master.upsert(entry);
         AnchorBundle {
             jurisdiction: "EU".into(),
@@ -922,7 +943,10 @@ mod tests {
         g.add_edge(forged).unwrap();
         let req = ScopeRequest::new("eu", "urn:unidpp:profile:eu-batt@3", "batteries", t(500));
         let err = g.resolve(fx.end_key.key_id(), &req, &b).unwrap_err();
-        assert!(matches!(err, SignatifError::CredentialSignatureInvalid { .. }));
+        assert!(matches!(
+            err,
+            SignatifError::CredentialSignatureInvalid { .. }
+        ));
         // The direct-path variant must also fail when the *first* hop
         // is forged.
         let rogue2 = KeyPair::seeded(Suite::Ed25519, b"rogue2").unwrap();
@@ -1039,8 +1063,18 @@ mod tests {
         assert!(b.accepts_root(&fx.root, t(10)).is_ok());
         // Drop two attestations (the third was signed with the wrong
         // key and never counted): below quorum.
-        b.master.entries.get_mut(&fx.root).unwrap().attestations.pop();
-        b.master.entries.get_mut(&fx.root).unwrap().attestations.pop();
+        b.master
+            .entries
+            .get_mut(&fx.root)
+            .unwrap()
+            .attestations
+            .pop();
+        b.master
+            .entries
+            .get_mut(&fx.root)
+            .unwrap()
+            .attestations
+            .pop();
         assert!(matches!(
             b.accepts_root(&fx.root, t(10)),
             Err(SignatifError::Trust(_))
@@ -1074,7 +1108,11 @@ mod tests {
         let unknown = KeyId::new("k-0000000000000000").unwrap();
         assert!(fx.graph.node_for_key(&unknown).is_none());
         assert!(matches!(
-            fx.graph.resolve(&unknown, &ScopeRequest::new("eu", "p@1", "batteries", t(1)), &bundle(&fx)),
+            fx.graph.resolve(
+                &unknown,
+                &ScopeRequest::new("eu", "p@1", "batteries", t(1)),
+                &bundle(&fx)
+            ),
             Err(SignatifError::NoTrustPath { .. })
         ));
     }

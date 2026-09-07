@@ -5,7 +5,9 @@ mod common;
 
 use common::{battery_request, cosign_issuance, pid, t, topology, T0};
 
-use unidpp_signatif::graph::{DelegationCredential, DelegationNode, NodeId, NodeKind, RegisteredKey};
+use unidpp_signatif::graph::{
+    DelegationCredential, DelegationNode, NodeId, NodeKind, RegisteredKey,
+};
 use unidpp_signatif::scope::DelegationScope;
 use unidpp_signatif::sign::{AcceptancePolicy, Suite};
 use unidpp_signatif::verify::{SignatifVerifier, VerificationTarget};
@@ -38,7 +40,13 @@ fn in_scope_path_resolves_and_verifies() {
         provided: Default::default(),
         active_links: 0,
     };
-    let verdict = verifier.verify(&target, t(at + 5), &issuers, &provenance, Reading::CurrentState);
+    let verdict = verifier.verify(
+        &target,
+        t(at + 5),
+        &issuers,
+        &provenance,
+        Reading::CurrentState,
+    );
 
     // The trust layer: the Ed25519 slot verified, found a two-hop path
     // to the anchored eu-root, acceptance passed.
@@ -110,8 +118,17 @@ fn out_of_scope_product_group_fails_the_path() {
         provided: Default::default(),
         active_links: 0,
     };
-    let verdict = verifier.verify(&target, t(T0 + 100), &issuers, &provenance, Reading::CurrentState);
-    assert!(!verdict.accepted(), "out-of-scope artifact must be rejected");
+    let verdict = verifier.verify(
+        &target,
+        t(T0 + 100),
+        &issuers,
+        &provenance,
+        Reading::CurrentState,
+    );
+    assert!(
+        !verdict.accepted(),
+        "out-of-scope artifact must be rejected"
+    );
     assert!(verdict.trust.slots[0].path.is_err());
 }
 
@@ -192,7 +209,7 @@ fn unanchored_root_and_unlisted_keys_fail() {
 fn coverage_and_freshness_degrade_explicitly_through_the_pipeline() {
     use unidpp_model::{
         CapabilityClass, DataPointRef, FreshnessRequirement, Interval, ProfileAxes, ProfileId,
-        ProfileManifest, Resolution, TriggerPredicate, Traversal, VisibilityClass,
+        ProfileManifest, Resolution, Traversal, TriggerPredicate, VisibilityClass,
     };
 
     let topo = topology();
@@ -228,10 +245,12 @@ fn coverage_and_freshness_degrade_explicitly_through_the_pipeline() {
     };
 
     // Complete coverage, within the freshness window: accepted cleanly.
-    let full: std::collections::BTreeSet<String> =
-        ["ferin:eu/carbon".to_string(), "ferin:eu/recycled".to_string()]
-            .into_iter()
-            .collect();
+    let full: std::collections::BTreeSet<String> = [
+        "ferin:eu/carbon".to_string(),
+        "ferin:eu/recycled".to_string(),
+    ]
+    .into_iter()
+    .collect();
     let co = common::cosign_issuance_two(&log, &topo.issuer_key, Some(&topo.issuer_key_alt));
     let target = VerificationTarget {
         log: &log,
@@ -241,7 +260,13 @@ fn coverage_and_freshness_degrade_explicitly_through_the_pipeline() {
         provided: full,
         active_links: 0,
     };
-    let v = verifier.verify(&target, t(T0 + 70), &issuers, &provenance, Reading::Evidentiary);
+    let v = verifier.verify(
+        &target,
+        t(T0 + 70),
+        &issuers,
+        &provenance,
+        Reading::Evidentiary,
+    );
     assert!(v.accepted());
     assert!(matches!(v.verdict.outcome, unidpp_verdict::Outcome::Pass));
     assert!(v.verdict.evidentiary.coverage.is_complete());
@@ -259,7 +284,13 @@ fn coverage_and_freshness_degrade_explicitly_through_the_pipeline() {
         provided: partial,
         active_links: 0,
     };
-    let v2 = verifier.verify(&target2, t(T0 + 70), &issuers, &provenance, Reading::Evidentiary);
+    let v2 = verifier.verify(
+        &target2,
+        t(T0 + 70),
+        &issuers,
+        &provenance,
+        Reading::Evidentiary,
+    );
     assert!(v2.accepted(), "accepted-but-degraded");
     match &v2.verdict.outcome {
         unidpp_verdict::Outcome::Degraded(unidpp_verdict::Degradation::CoverageIncomplete {
@@ -270,10 +301,12 @@ fn coverage_and_freshness_degrade_explicitly_through_the_pipeline() {
     assert!(!v2.verdict.evidentiary.coverage.is_complete());
 
     // Stale data: same artifact verified long after the freshness window.
-    let full2: std::collections::BTreeSet<String> =
-        ["ferin:eu/carbon".to_string(), "ferin:eu/recycled".to_string()]
-            .into_iter()
-            .collect();
+    let full2: std::collections::BTreeSet<String> = [
+        "ferin:eu/carbon".to_string(),
+        "ferin:eu/recycled".to_string(),
+    ]
+    .into_iter()
+    .collect();
     let co3 = common::cosign_issuance_two(&log, &topo.issuer_key, Some(&topo.issuer_key_alt));
     let target3 = VerificationTarget {
         log: &log,
@@ -283,8 +316,13 @@ fn coverage_and_freshness_degrade_explicitly_through_the_pipeline() {
         provided: full2,
         active_links: 0,
     };
-    let v3 =
-        verifier.verify(&target3, t(T0 + 10_000), &issuers, &provenance, Reading::Evidentiary);
+    let v3 = verifier.verify(
+        &target3,
+        t(T0 + 10_000),
+        &issuers,
+        &provenance,
+        Reading::Evidentiary,
+    );
     assert!(matches!(
         v3.verdict.outcome,
         unidpp_verdict::Outcome::Degraded(unidpp_verdict::Degradation::StaleData { .. })

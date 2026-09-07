@@ -42,7 +42,10 @@ use crate::graph::{AnchorBundle, TrustGraph, TrustPath};
 use crate::keyring::{KeyId, KeyPair, PublicKey};
 use crate::revoke::{IssuanceIndex, RevocationLedger, Standing};
 use crate::scope::ScopeRequest;
-use crate::sign::{Acceptance, AcceptancePolicy, CoSignature, CoSignatureReport, SignatureSlot, SigningDomain, Suite};
+use crate::sign::{
+    Acceptance, AcceptancePolicy, CoSignature, CoSignatureReport, SignatureSlot, SigningDomain,
+    Suite,
+};
 use crate::SignatifError;
 
 /// Everything the pipeline verifies about one target artifact.
@@ -176,9 +179,16 @@ impl<'a> SignatifVerifier<'a> {
         let mut any_verified = false;
         for slot in &target.co_signature.slots {
             let crypto = match dir.resolve(&slot.key_id) {
-                None => Err(format!("key `{}` is not registered in the trust graph", slot.key_id)),
+                None => Err(format!(
+                    "key `{}` is not registered in the trust graph",
+                    slot.key_id
+                )),
                 Some(public) => slot
-                    .verify(target.co_signature.domain, &target.co_signature.payload, public)
+                    .verify(
+                        target.co_signature.domain,
+                        &target.co_signature.payload,
+                        public,
+                    )
                     .map_err(|e| e.to_string()),
             };
             if crypto.is_ok() {
@@ -220,7 +230,9 @@ impl<'a> SignatifVerifier<'a> {
             builder = builder.with_anchor(anchor);
         }
         if let Some(profile) = target.profile {
-            builder = builder.with_profile(profile).with_provided(target.provided.clone());
+            builder = builder
+                .with_profile(profile)
+                .with_provided(target.provided.clone());
         }
         let verdict = builder.build();
 
@@ -258,12 +270,14 @@ impl<'a> SignatifVerifier<'a> {
                 .append(sealed.event.clone(), None, None)
                 .map_err(|e| SignatifError::invalid(e.to_string()))?;
         }
-        let state_hash = log.state_hash_at(at).ok_or_else(|| {
-            SignatifError::invalid(format!("log has no state as of {at}"))
-        })?;
+        let state_hash = log
+            .state_hash_at(at)
+            .ok_or_else(|| SignatifError::invalid(format!("log has no state as of {at}")))?;
         let anchor = prefix.head();
 
-        let taints = self.ledger.taints_known_at(log.subject(), issuers, provenance, at);
+        let taints = self
+            .ledger
+            .taints_known_at(log.subject(), issuers, provenance, at);
         let mut builder = VerdictBuilder::new(&prefix, at)
             .with_taints(taints)
             .answering(Reading::Evidentiary);
@@ -302,11 +316,7 @@ pub struct HistoricalVerification {
 
 impl HistoricalVerification {
     /// Canonical stamped bytes.
-    pub fn stamp_bytes(
-        subject: &PassportId,
-        as_of: Timestamp,
-        state_hash: &Hash,
-    ) -> Vec<u8> {
+    pub fn stamp_bytes(subject: &PassportId, as_of: Timestamp, state_hash: &Hash) -> Vec<u8> {
         let mut w = unidpp_model::CanonicalWriter::new();
         w.write_str(subject.as_str());
         w.write_i64(as_of.secs);
@@ -317,7 +327,8 @@ impl HistoricalVerification {
 
     /// Verify the notary's signature.
     pub fn verify_notary(&self, notary_public: &PublicKey) -> Result<(), SignatifError> {
-        let stamp = HistoricalVerification::stamp_bytes(&self.subject, self.as_of, &self.state_hash);
+        let stamp =
+            HistoricalVerification::stamp_bytes(&self.subject, self.as_of, &self.state_hash);
         self.notary
             .verify(SigningDomain::HistoricalStamp, &stamp, notary_public)
     }
