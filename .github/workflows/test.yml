@@ -6,6 +6,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: unidpp-signatif
     strategy:
       fail-fast: false
       matrix:
@@ -20,6 +23,12 @@ jobs:
           ["", "sm2", "ml-dsa", "ml-kem", "sm2,ml-dsa,ml-kem", "confium"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: unidpp-signatif
+      - uses: actions/checkout@v4
+        with:
+          repository: unidpp/unidpp-core
+          path: unidpp-core
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
