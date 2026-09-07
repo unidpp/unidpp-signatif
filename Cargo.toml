@@ -13,6 +13,14 @@ rust-version = "1.75"
 # API. No build dependency on Confium; the real binding is deferred.
 default = []
 confium = []
+# SM2 (GB/T 32918 / GM/T 0003.2) real computation: deterministic
+# RFC 6979-style signing over SM3 via the RustCrypto `sm2` crate. With
+# the feature off, the suite stays framing-only (see `Suite::deferral`).
+sm2 = ["dep:sm2"]
+# ML-DSA-65 (FIPS 204) real computation via the `ml-dsa` crate
+# (seeded keygen + deterministic signing). With the feature off, the
+# suite stays framing-only. MlDsa44/87 remain framed either way.
+ml-dsa = ["dep:ml-dsa"]
 # SLH-DSA (FIPS 205) integration seam. Deliberately a STUB: enabling it
 # does not yet compute SLH-DSA, because the PQ binding crate is
 # intentionally not a dependency (build-size and supply-chain review
@@ -31,6 +39,8 @@ unidpp-verdict = { path = "../unidpp-core/crates/verdict" }
 serde = { version = "1", features = ["derive"] }
 ed25519-dalek = "2"
 p256 = "0.13"
+sm2 = { version = "0.13", default-features = false, features = ["dsa", "alloc"], optional = true }
+ml-dsa = { version = "0.1", default-features = false, features = ["alloc"], optional = true }
 
 [dev-dependencies]
 serde_json = "1"

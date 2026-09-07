@@ -92,10 +92,14 @@ fn framed_sm2_slot_is_deferred_and_never_fakes_verification() {
 
     let mut co = CoSignature::new(SigningDomain::ArtifactEvent, &body);
     co.frame_by(Suite::Sm2, topo.issuer_key.key_id());
-    // Forge a plausible-looking SM2 value: must be Deferred, not Verified.
+    // Forge a plausible-looking SM2 value. Without the `sm2` binding
+    // the suite is framing-only: Deferred, never faked. With the
+    // binding, the value faces real verification: the anchor here is
+    // the topology's Ed25519 key, so the mismatched slot is Invalid.
     co.slots[0].signature = Some(vec![0xA5u8; 64]);
 
     let report = co.verify(&dir);
+    #[cfg(not(feature = "sm2"))]
     match &report.slots[0] {
         SlotVerdict::Deferred { suite, detail, .. } => {
             assert_eq!(suite, "sm2");
@@ -103,11 +107,13 @@ fn framed_sm2_slot_is_deferred_and_never_fakes_verification() {
         }
         other => panic!("expected Deferred, got {other:?}"),
     }
+    #[cfg(feature = "sm2")]
+    assert!(matches!(&report.slots[0], SlotVerdict::Invalid { .. }));
     assert!(!report.any_verified());
     assert!(!AcceptancePolicy::any_computed()
         .evaluate(&report)
         .is_accepted());
-    // Direct slot verification states the documented deferral.
+    // Direct slot verification states the same refusal.
     let err = co.slots[0]
         .verify(
             SigningDomain::ArtifactEvent,
@@ -115,6 +121,7 @@ fn framed_sm2_slot_is_deferred_and_never_fakes_verification() {
             topo.issuer_key.public(),
         )
         .unwrap_err();
+    #[cfg(not(feature = "sm2"))]
     match &err {
         SignatifError::SuiteDeferred { suite, detail } => {
             assert_eq!(suite, "sm2");
@@ -122,9 +129,23 @@ fn framed_sm2_slot_is_deferred_and_never_fakes_verification() {
         }
         other => panic!("expected SuiteDeferred, got {other:?}"),
     }
-    // Same discipline for ML-DSA-65.
-    let ml = KeyPair::seeded(Suite::MlDsa65, b"x").unwrap_err();
-    assert!(matches!(ml, SignatifError::SuiteDeferred { .. }));
+    #[cfg(feature = "sm2")]
+    assert!(matches!(&err, SignatifError::Crypto { .. }));
+    // ML-DSA-65: the same split — deferred without the binding,
+    // computed with it.
+    #[cfg(not(feature = "ml-dsa"))]
+    {
+        let ml = KeyPair::seeded(Suite::MlDsa65, b"x").unwrap_err();
+        assert!(matches!(ml, SignatifError::SuiteDeferred { .. }));
+    }
+    #[cfg(feature = "ml-dsa")]
+    {
+        let ml = KeyPair::seeded(Suite::MlDsa65, b"x").unwrap();
+        let slot = SignatureSlot::sign(&ml, SigningDomain::ArtifactEvent, &body).unwrap();
+        assert_eq!(slot.signature.as_ref().unwrap().len(), 3309);
+        slot.verify(SigningDomain::ArtifactEvent, &body, ml.public())
+            .unwrap();
+    }
 }
 
 #[test]

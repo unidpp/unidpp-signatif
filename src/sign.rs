@@ -133,8 +133,19 @@ impl Suite {
     }
 
     /// Whether this suite has real computation in this crate.
+    ///
+    /// SM2 and ML-DSA-65 compute when their binding features (`sm2`,
+    /// `ml-dsa`) are enabled; without them the suites stay framing-only
+    /// ([`Suite::deferral`]) — never silently faked.
     pub fn is_computed(self) -> bool {
-        matches!(self, Suite::Ed25519 | Suite::EcdsaP256)
+        match self {
+            Suite::Ed25519 | Suite::EcdsaP256 => true,
+            #[cfg(feature = "sm2")]
+            Suite::Sm2 => true,
+            #[cfg(feature = "ml-dsa")]
+            Suite::MlDsa65 => true,
+            _ => false,
+        }
     }
 
     /// Whether this suite is a post-quantum algorithm (ML-DSA per
@@ -177,7 +188,20 @@ impl Suite {
 
     /// The documented deferral for framing-only suites.
     pub fn deferral(self) -> Option<&'static str> {
-        match self {
+        let m = self;
+        #[cfg(feature = "sm2")]
+        {
+            if matches!(m, Suite::Sm2) {
+                return None;
+            }
+        }
+        #[cfg(feature = "ml-dsa")]
+        {
+            if matches!(m, Suite::MlDsa65) {
+                return None;
+            }
+        }
+        match m {
             Suite::Sm2 => Some(
                 "SM2 computation requires a GM/T 0003 binding crate; SIGNATIF carries the \
                  core's framing (64-byte r||s slots) and refuses to fake verification",
@@ -981,16 +1005,28 @@ mod tests {
         let ed = KeyPair::seeded(Suite::Ed25519, b"co-3").unwrap();
         let mut dir = KeyDirectory::new();
         dir.register(ed.public());
-        // A fake SM2 slot value: must NOT verify and must NOT be
-        // reported Invalid — it is Deferred (framing-only).
+        // A fake value in a framing-only suite (ML-DSA-44 never
+        // computes here): must NOT verify and must NOT be reported
+        // Invalid — it is Deferred.
         let mut co = CoSignature::new(SigningDomain::ArtifactEvent, b"payload");
-        co.frame_by(Suite::Sm2, ed.key_id());
-        co.slots[0].signature = Some(vec![0u8; 64]);
+        co.frame_by(Suite::MlDsa44, ed.key_id());
+        co.slots[0].signature = Some(vec![0u8; 2420]);
         let report = co.verify(&dir);
         assert!(matches!(
             &report.slots[0],
-            SlotVerdict::Deferred { suite, .. } if suite == "sm2"
+            SlotVerdict::Deferred { suite, .. } if suite == "ml-dsa-44"
         ));
+        // The same fake value in SM2: with the binding feature the
+        // suite computes, so the junk value is Invalid (real
+        // verification refused it); without the feature it is Deferred.
+        let mut sm2 = CoSignature::new(SigningDomain::ArtifactEvent, b"payload");
+        sm2.frame_by(Suite::Sm2, ed.key_id());
+        sm2.slots[0].signature = Some(vec![0u8; 64]);
+        let report2 = sm2.verify(&dir);
+        #[cfg(feature = "sm2")]
+        assert!(matches!(&report2.slots[0], SlotVerdict::Invalid { .. }));
+        #[cfg(not(feature = "sm2"))]
+        assert!(matches!(&report2.slots[0], SlotVerdict::Deferred { .. }));
         assert!(!report.any_verified());
         assert!(!AcceptancePolicy::any_computed()
             .evaluate(&report)
@@ -1040,7 +1076,7 @@ mod tests {
         // A framed-only member fails the composite.
         let mut framed = CompositeSignature::new(SigningDomain::ArtifactEvent, b"canonical body");
         framed.sign_member(&ed).unwrap();
-        framed.frame_member(Suite::MlDsa65, p256.key_id());
+        framed.frame_member(Suite::MlDsa87, p256.key_id());
         let verdict = framed.verify(&dir);
         assert!(!verdict.verified);
         assert!(matches!(
