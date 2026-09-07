@@ -9,7 +9,9 @@
 //!    trust graph's registered keys;
 //! 2. **trust-path reading** — each verifying key resolved through the
 //!    scoped delegation graph to a root the verifier's anchor bundle
-//!    accepts;
+//!    accepts, with the path's executable scope conditions evaluated
+//!    at verification time (the typed `scope_condition_failed`
+//!    failure) and the §12 condition-withdrawal overlay applied;
 //! 3. **current-state reading** — the revocation ledger's taints
 //!    (window-scoped, cascading through the provenance DAG) fed to the
 //!    core's `CurrentStateReading`;
@@ -44,7 +46,7 @@ use crate::revoke::{IssuanceIndex, RevocationLedger, Standing};
 use crate::scope::ScopeRequest;
 use crate::sign::{
     Acceptance, AcceptancePolicy, CoSignature, CoSignatureReport, SignatureSlot, SigningDomain,
-    Suite,
+    SlotVerdict, Suite,
 };
 use crate::SignatifError;
 
@@ -80,6 +82,13 @@ pub struct SlotTrust {
     pub standing: Standing,
     /// Trust-path resolution result (scope + credentials).
     pub path: Result<TrustPath, String>,
+    /// Scope-condition evaluation result (CC/SIGNATIF §14 hard check):
+    /// the resolved path's effective-scope conditions evaluated against
+    /// the verifier's request, plus the §12 condition-withdrawal
+    /// overlay — a condition still carried by the scope but withdrawn
+    /// in the ledger at the verification moment fails. `Ok(())` when
+    /// the scope carries no conditions or all hold.
+    pub conditions: Result<(), String>,
 }
 
 /// The trust report wrapping the core verdict.
@@ -112,9 +121,13 @@ impl SignatifVerdict {
     }
 
     /// Overall acceptance: the acceptance policy is satisfied by at
-    /// least one slot that also cryptographically verifies with a
-    /// resolved trust path, the core outcome did not fail outright,
-    /// and the current-state reading does not void ab initio (fraud
+    /// least one slot that also cryptographically verifies, has a
+    /// resolved trust path whose **scope conditions evaluate true at
+    /// verification time** (CC/SIGNATIF §3.6.4/§14: the request must
+    /// satisfy every effective condition, and no condition may have
+    /// been withdrawn in the ledger — the §12 condition-withdrawal
+    /// track), the core outcome did not fail outright, and the
+    /// current-state reading does not void ab initio (fraud
     /// laundering prevention: a retroactively misissued artifact is
     /// never accepted, however sound its signatures).
     ///
@@ -129,7 +142,7 @@ impl SignatifVerdict {
             .trust
             .slots
             .iter()
-            .any(|s| s.crypto.is_ok() && s.path.is_ok());
+            .any(|s| s.crypto.is_ok() && s.path.is_ok() && s.conditions.is_ok());
         self.trust.acceptance.is_accepted()
             && slot_ok
             && !matches!(self.verdict.outcome, Outcome::Fail(_))
@@ -159,6 +172,73 @@ pub struct SignatifVerifier<'a> {
 }
 
 impl<'a> SignatifVerifier<'a> {
+    /// Evaluate a resolved path's scope conditions at verification
+    /// time (CC/SIGNATIF §3.6.4, §11 `scope-conditions`):
+    ///
+    /// 1. every condition of the path's **effective scope** must hold
+    ///    for the verifier's request (typed
+    ///    [`SignatifError::ScopeConditionFailed`] on the first
+    ///    failure — the standard's `scope_condition_failed` failure
+    ///    reason);
+    /// 2. no condition the scope still carries may have been
+    ///    **withdrawn** (§12 `revocation-condition-withdrawal`): a
+    ///    ledger declaration withdrawing a condition from a delegated
+    ///    node, in force at `now`, fails any path whose credentials
+    ///    granted that condition to that node.
+    fn evaluate_conditions(&self, path: &TrustPath, now: Timestamp) -> Result<(), SignatifError> {
+        if let Some(condition) = path.effective_scope.first_failed_condition(&self.request) {
+            return Err(SignatifError::ScopeConditionFailed {
+                condition: condition.clone(),
+            });
+        }
+        for cred in &path.credentials {
+            let withdrawn = self.ledger.withdrawn_conditions_at(&cred.child, now);
+            for condition in &cred.scope.conditions {
+                if withdrawn.contains(&condition) {
+                    return Err(SignatifError::ScopeViolation(format!(
+                        "scope condition `{condition}` granted to {} was withdrawn in the \
+                         ledger (CC/SIGNATIF §12 condition withdrawal)",
+                        cred.child
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Assemble the trust facts of one signature slot (plain or
+    /// composite member): revocation standing, trust-path resolution,
+    /// and the verify-time scope-condition evaluation.
+    fn slot_trust(
+        &self,
+        slot: &SignatureSlot,
+        crypto: Result<(), String>,
+        now: Timestamp,
+    ) -> SlotTrust {
+        let standing = self.ledger.key_standing(&slot.key_id, now);
+        let path = self
+            .graph
+            .resolve(&slot.key_id, &self.request, self.bundle)
+            .map_err(|e| e.to_string());
+        // CC/SIGNATIF §14 hard check: evaluate the effective scope's
+        // conditions at verification time, with the §12 withdrawal
+        // overlay from the ledger.
+        let conditions = match &path {
+            Ok(p) => self.evaluate_conditions(p, now).map_err(|e| e.to_string()),
+            Err(e) => Err(format!(
+                "no resolved path to evaluate scope conditions: {e}"
+            )),
+        };
+        SlotTrust {
+            suite: slot.suite,
+            key_id: slot.key_id.clone(),
+            crypto,
+            standing,
+            path,
+            conditions,
+        }
+    }
+
     /// Verify a target `now`, answering the requested reading.
     ///
     /// `issuers` and `provenance` drive the current-state reading's
@@ -175,7 +255,18 @@ impl<'a> SignatifVerifier<'a> {
         let dir = self.graph.key_directory();
         let crypto_report = target.co_signature.verify(&dir);
 
-        let mut slots = Vec::with_capacity(target.co_signature.slots.len());
+        // Per-slot trust facts: plain slots, plus every composite's
+        // members (a composite's crypto verdict is per-member; its
+        // AND-composition lives in the crypto report).
+        let mut slots = Vec::with_capacity(
+            target.co_signature.slots.len()
+                + target
+                    .co_signature
+                    .composites
+                    .iter()
+                    .map(|c| c.members.len())
+                    .sum::<usize>(),
+        );
         let mut any_verified = false;
         for slot in &target.co_signature.slots {
             let crypto = match dir.resolve(&slot.key_id) {
@@ -194,18 +285,25 @@ impl<'a> SignatifVerifier<'a> {
             if crypto.is_ok() {
                 any_verified = true;
             }
-            let standing = self.ledger.key_standing(&slot.key_id, now);
-            let path = self
-                .graph
-                .resolve(&slot.key_id, &self.request, self.bundle)
-                .map_err(|e| e.to_string());
-            slots.push(SlotTrust {
-                suite: slot.suite,
-                key_id: slot.key_id.clone(),
-                crypto,
-                standing,
-                path,
-            });
+            slots.push(self.slot_trust(slot, crypto, now));
+        }
+        for composite in &target.co_signature.composites {
+            let verdict = composite.verify(&dir);
+            for (member, member_verdict) in composite.members.iter().zip(&verdict.members) {
+                let crypto = match member_verdict {
+                    SlotVerdict::Verified { .. } => Ok(()),
+                    SlotVerdict::Invalid { why, .. } => Err(why.clone()),
+                    SlotVerdict::Deferred { detail, .. } => Err(detail.clone()),
+                    SlotVerdict::UnknownKey { .. } => Err(format!(
+                        "composite member key `{}` is not registered in the trust graph",
+                        member.key_id
+                    )),
+                };
+                if crypto.is_ok() {
+                    any_verified = true;
+                }
+                slots.push(self.slot_trust(member, crypto, now));
+            }
         }
 
         let acceptance = self.policy.evaluate(&crypto_report);

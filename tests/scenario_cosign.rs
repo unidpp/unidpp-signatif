@@ -148,6 +148,7 @@ fn tampered_payload_fails_all_suites() {
         domain: SigningDomain::ArtifactEvent,
         payload: forged,
         slots: co.slots.clone(),
+        composites: Vec::new(),
     }
     .verify(&dir);
     assert_eq!(report.verified_count(), 0);
@@ -230,4 +231,81 @@ fn timestamped_event_stamps_flow_through_cosignature() {
     let report = co.verify(&dir);
     assert!(report.any_verified());
     assert_eq!(t(T0 + 70), log.sealed()[1].event.occurred_at);
+}
+
+#[test]
+fn composite_slot_form_flows_through_the_pipeline() {
+    // CC/SIGNATIF §3.7.4: a composite (AND-composition) carried as the
+    // alternative slot form of a co-signature, end-to-end through the
+    // verification pipeline.
+    use unidpp_signatif::verify::{SignatifVerifier, VerificationTarget};
+    use unidpp_verdict::Reading;
+
+    let topo = topology();
+    let (ledger, provenance) = common::empty_state();
+    let issuers = unidpp_signatif::revoke::IssuanceIndex::new();
+    let subject = pid("battery-composite");
+    let log = common::passport_log(&subject, T0 + 60, "issuer-key-a");
+    let body = log.sealed()[0].event.canonical_body().unwrap();
+
+    // A co-signature whose ONLY slot form is one composite
+    // (Ed25519 AND ECDSA-P256 over the same payload).
+    let mut co = CoSignature::new(SigningDomain::ArtifactEvent, &body);
+    co.sign_composite_by(&[&topo.issuer_key, &topo.issuer_key_alt])
+        .unwrap();
+    assert!(co.slots.is_empty());
+    assert_eq!(co.composites.len(), 1);
+
+    let verify = |co: CoSignature| {
+        let verifier = SignatifVerifier {
+            graph: &topo.graph,
+            bundle: &topo.bundle,
+            ledger: &ledger,
+            request: common::battery_request(t(T0 + 100)),
+            policy: AcceptancePolicy::multi_signed(),
+        };
+        let target = VerificationTarget {
+            log: &log,
+            co_signature: co,
+            anchor: Some(log.head().unwrap()),
+            profile: None,
+            provided: Default::default(),
+            active_links: 0,
+        };
+        verifier.verify(
+            &target,
+            t(T0 + 100),
+            &issuers,
+            &provenance,
+            Reading::CurrentState,
+        )
+    };
+
+    // Whole composite verifies: both member suites count, the strict
+    // multi-signed policy is satisfied by the single composite, and
+    // each member has full slot-trust rows (crypto, path, conditions).
+    let verdict = verify(co.clone());
+    assert!(verdict.accepted(), "verified composite must accept");
+    assert!(verdict.trust.crypto.all_composites_verified());
+    assert_eq!(verdict.trust.crypto.distinct_verified_suites(), 2);
+    assert_eq!(verdict.trust.slots.len(), 2);
+    for slot in &verdict.trust.slots {
+        assert!(slot.crypto.is_ok());
+        assert!(slot.path.is_ok());
+    }
+
+    // One tampered member: the composite fails as a whole (AND), no
+    // suite counts, the policy rejects.
+    let mut tampered = co;
+    tampered.composites[0].members[0]
+        .signature
+        .as_mut()
+        .unwrap()[0] ^= 0x01;
+    let verdict = verify(tampered);
+    assert!(!verdict.trust.crypto.all_composites_verified());
+    assert!(!verdict.trust.crypto.any_verified());
+    assert!(
+        !verdict.accepted(),
+        "a composite with one broken member must fail acceptance"
+    );
 }

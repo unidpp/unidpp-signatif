@@ -13,6 +13,15 @@ rust-version = "1.75"
 # API. No build dependency on Confium; the real binding is deferred.
 default = []
 confium = []
+# SLH-DSA (FIPS 205) integration seam. Deliberately a STUB: enabling it
+# does not yet compute SLH-DSA, because the PQ binding crate is
+# intentionally not a dependency (build-size and supply-chain review
+# pending; see `Suite::unsupported`). The feature is the seam where the
+# binding lands: with it on, the SLH-DSA suites route to the
+# feature-gated guidance path instead of the default refusal. No
+# `unimplemented!` anywhere — every path returns an explicit
+# `SignatifError::Unsupported`.
+slh-dsa = []
 
 [dependencies]
 unidpp-model = { path = "../unidpp-core/crates/model" }

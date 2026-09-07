@@ -235,6 +235,63 @@ fn witness_sth_signature_and_size_binding() {
         timestamp: sth.timestamp,
         root: sth.root,
         signature: sth.signature.clone(),
+        external_anchor: None,
     };
     assert!(tlog.verify_size_against(&fake).is_err());
+}
+
+#[test]
+fn tree_head_anchored_externally_for_irrefutable_time() {
+    // CC/SIGNATIF §13 transparency-anchoring: the operator anchors the
+    // signed tree head to an external time source. The library produces
+    // the commitment payload (never a network call); verification of
+    // the payload-to-head binding is offline and deterministic.
+    use unidpp_signatif::anchor::{
+        external_anchor_payload, verify_external_anchor, ExternalAnchorMethod,
+    };
+
+    let operator = witness_operator("eu-4");
+    let mut tlog = TransparencyLog::new("eu-witness-4");
+    for i in 0..3u8 {
+        tlog.append(LogEntry::public(unidpp_model::sha256(&[&[i]])));
+    }
+    let sth = tlog.sign_tree_head(t(9000), &operator).unwrap();
+
+    // Both anchoring methods commit to the same head digest with
+    // different submission framings.
+    let ots = ExternalAnchorMethod::OtsLite {
+        rendezvous: "https://calendar.unidpp.example/anchor".into(),
+    };
+    let tsa = ExternalAnchorMethod::Rfc3161 {
+        tsa_url: "https://tsa.example.org".into(),
+    };
+    let a_ots = external_anchor_payload(&sth, &ots);
+    let a_tsa = external_anchor_payload(&sth, &tsa);
+    assert_eq!(a_ots.digest, a_tsa.digest);
+    assert_ne!(a_ots.payload, a_tsa.payload);
+    assert!(verify_external_anchor(&a_ots, &sth).is_ok());
+    assert!(verify_external_anchor(&a_tsa, &sth).is_ok());
+
+    // Attach to the head (the operator signature still verifies — the
+    // anchor binds TO the signed bytes, not the other way round), and
+    // carry the anchored head through the witness/master-list flow.
+    let anchored = sth.clone().anchored_externally(ots);
+    assert!(anchored.verify(operator.public()).is_ok());
+    assert!(anchored.verify_external_anchor().is_ok());
+    // The anchored STH's log-of-logs commitment is unchanged by the
+    // anchor: the master list sees the same head.
+    assert_eq!(anchored.lol_commitment(), sth.lol_commitment());
+    let mut lol = LogOfLogs::new(1, 1);
+    lol.append_witness_sth(&anchored);
+    assert!(lol.root().is_some());
+
+    // A rewritten history (claiming a size the log never had) breaks
+    // the offline payload check: the anchor no longer commits to the
+    // mutated head.
+    let rewritten = SignedTreeHead {
+        tree_size: 99,
+        ..anchored.clone()
+    };
+    assert!(verify_external_anchor(&a_ots, &rewritten).is_err());
+    assert!(rewritten.verify_external_anchor().is_err());
 }

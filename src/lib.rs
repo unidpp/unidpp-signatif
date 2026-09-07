@@ -15,8 +15,13 @@
 //!   and ECDSA-P256 (RFC 6979 deterministic, p256) cryptography over the
 //!   core's canonical payloads, plus co-signature aggregation under
 //!   policy-scoped acceptance (pass if ANY suite the acceptance policy
-//!   allows verifies). SM2 and ML-DSA remain framing-only — see
-//!   [`sign::Suite`] for the documented deferral;
+//!   allows verifies), and **composite signatures** (cryptographic
+//!   AND-composition of member suites over one payload, CC/SIGNATIF
+//!   §3.7.4) carried as an alternative slot form alongside the
+//!   multi-suite collection. SM2 and ML-DSA remain framing-only — see
+//!   [`sign::Suite`] for the documented deferral; SLH-DSA is framed and
+//!   gated behind the (stubbed) `slh-dsa` crate feature, refusing with
+//!   an explicit [`SignatifError::Unsupported`] rather than panicking;
 //! - **revocation** ([`revoke`]) with a prospective/retroactive reason
 //!   taxonomy, distrust windows `[start, end]` with cascading voiding
 //!   inside the window and re-validation outside it, and propagation to
@@ -24,8 +29,13 @@
 //!   crates;
 //! - **transparency anchoring** ([`anchor`]): an append-only Merkle log
 //!   with inclusion and consistency proofs, signed tree heads, salted
-//!   commitment leaves (logs anchor commitments, never facts), and a
-//!   log-of-logs M-of-K master list;
+//!   commitment leaves (logs anchor commitments, never facts), a
+//!   log-of-logs M-of-K master list, and **external time anchoring**
+//!   (CC/SIGNATIF §13): an OpenTimestamps-style commitment payload
+//!   (RFC 3161 timestamp request bytes or an OTS-lite digest +
+//!   rendezvous point) produced by
+//!   [`anchor::external_anchor_payload`] for the operator to submit —
+//!   the library never performs network calls;
 //! - a **verification pipeline** ([`verify`]) producing the core's
 //!   [`unidpp_verdict::Verdict`] types: the three readings, coverage
 //!   reports, and time-stamped historical verification valid as-of its
@@ -33,7 +43,11 @@
 //! - a **Confium seam** (module `confium`, feature `confium`): interface-only
 //!   trait shapes for threshold ceremonies, mirroring the Confium
 //!   session/coordinator API. The real binding is a documented
-//!   deviation: it is deferred.
+//!   deviation: it is deferred;
+//! - a **deployment manifest** ([`manifest`], CC/SIGNATIF §18): the
+//!   serializable declaration of a deployment's active and deprecated
+//!   algorithms, migration phase, topology profile, and scope
+//!   extensions, with a validation function.
 //!
 //! Crate conventions follow `unidpp-core`: serde-only extra dependencies
 //! where possible (the two real-crypto crates are the deliberate
@@ -46,6 +60,7 @@
 pub mod anchor;
 pub mod graph;
 pub mod keyring;
+pub mod manifest;
 pub mod revoke;
 pub mod scope;
 pub mod sign;
@@ -55,7 +70,8 @@ pub mod verify;
 pub mod confium;
 
 pub use anchor::{
-    verify_consistency, verify_inclusion, ConsistencyProof, InclusionProof, LogEntry, LogOfLogs,
+    external_anchor_payload, verify_consistency, verify_external_anchor, verify_inclusion,
+    ConsistencyProof, ExternalAnchor, ExternalAnchorMethod, InclusionProof, LogEntry, LogOfLogs,
     ProofNode, Side, SignedTreeHead, TransparencyLog,
 };
 pub use graph::{
@@ -64,14 +80,15 @@ pub use graph::{
     WitnessAttestation,
 };
 pub use keyring::{KeyId, KeyPair, PublicKey};
+pub use manifest::{AlgorithmStatus, DeploymentManifest, MigrationPhase, TopologyProfile};
 pub use revoke::{
     IssuanceIndex, QuorumAttestation, Revocation, RevocationLedger, RevocationReason,
     RevokedSubject, Standing,
 };
-pub use scope::{DelegationScope, LayerConstraint, ScopeRequest, WindowConstraint};
+pub use scope::{DelegationScope, LayerConstraint, ScopeCondition, ScopeRequest, WindowConstraint};
 pub use sign::{
-    Acceptance, AcceptancePolicy, CoSignature, CoSignatureReport, SignatureSlot, SigningDomain,
-    SlotVerdict, Suite,
+    Acceptance, AcceptancePolicy, CoSignature, CoSignatureReport, CompositeSignature,
+    CompositeVerdict, SignatureSlot, SigningDomain, SlotVerdict, Suite,
 };
 pub use verify::{HistoricalStanding, HistoricalVerification, SignatifVerdict, TrustReport};
 
@@ -105,6 +122,25 @@ pub enum SignatifError {
         /// The key whose path was out of scope.
         key_id: String,
         /// Which layer (or detail) excluded the request.
+        detail: String,
+    },
+    /// A path's effective scope carried a condition the request does
+    /// not satisfy (CC/SIGNATIF §14 `tab-failure-reasons`
+    /// `scope_condition_failed`): the pipeline's hard scope-condition
+    /// check failed at verification time.
+    ScopeConditionFailed {
+        /// The condition that was not met.
+        condition: crate::scope::ScopeCondition,
+    },
+    /// The operation is explicitly unsupported under the current
+    /// feature set — distinct from [`SignatifError::SuiteDeferred`]
+    /// (a binding exists by design) in that no computation path exists
+    /// here at all; the `detail` names the feature or binding that
+    /// would activate it (currently the SLH-DSA stub).
+    Unsupported {
+        /// The suite or operation that is unsupported.
+        suite: String,
+        /// What would activate support.
         detail: String,
     },
     /// A delegation credential failed signature verification.
@@ -164,6 +200,16 @@ impl fmt::Display for SignatifError {
                     f,
                     "path to key `{key_id}` exists but scope excludes the request: {detail}"
                 )
+            }
+            SignatifError::ScopeConditionFailed { condition } => {
+                write!(
+                    f,
+                    "scope condition `{condition}` ({}-form) failed at verification time",
+                    condition.label()
+                )
+            }
+            SignatifError::Unsupported { suite, detail } => {
+                write!(f, "suite `{suite}` is unsupported here: {detail}")
             }
             SignatifError::CredentialSignatureInvalid { parent, child } => write!(
                 f,

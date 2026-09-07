@@ -34,6 +34,7 @@ use unidpp_transform::{ProvenanceGraph, Taint, TaintKind, TaintSet};
 
 use crate::graph::NodeId;
 use crate::keyring::{KeyId, KeyPair};
+use crate::scope::ScopeCondition;
 use crate::sign::{canonical_fields, SignatureSlot, SigningDomain};
 use crate::SignatifError;
 
@@ -59,6 +60,11 @@ pub enum RevocationReason {
     },
     /// Affiliation change (accreditation moved).
     AffiliationChange,
+    /// A granted authorization-scope condition (CC/SIGNATIF §3.6.4)
+    /// was withdrawn: acts whose scope still depends on it fail from
+    /// the withdrawal's effect moment onward. Prospective — earlier
+    /// verifications stand (the §12 condition-withdrawal track).
+    ConditionWithdrawal,
     // ---- Retroactive: void ab initio / from window start ----
     /// Misissuance: acts inside the window were wrongful from the start.
     Misissuance,
@@ -91,6 +97,7 @@ impl RevocationReason {
             RevocationReason::Cessation => "cessation",
             RevocationReason::Supersession { .. } => "supersession",
             RevocationReason::AffiliationChange => "affiliation-change",
+            RevocationReason::ConditionWithdrawal => "condition-withdrawal",
             RevocationReason::Misissuance => "misissuance",
             RevocationReason::FraudulentIssuance => "fraudulent-issuance",
             RevocationReason::AuthorityCompromised { .. } => "authority-compromised",
@@ -103,7 +110,8 @@ impl RevocationReason {
             RevocationReason::KeyCompromise { .. } => TaintKind::Known(KnownTaint::Compromised),
             RevocationReason::Cessation
             | RevocationReason::Supersession { .. }
-            | RevocationReason::AffiliationChange => TaintKind::Known(KnownTaint::Revoked),
+            | RevocationReason::AffiliationChange
+            | RevocationReason::ConditionWithdrawal => TaintKind::Known(KnownTaint::Revoked),
             RevocationReason::Misissuance | RevocationReason::AuthorityCompromised { .. } => {
                 TaintKind::Known(KnownTaint::Misissued)
             }
@@ -121,6 +129,18 @@ pub enum RevokedSubject {
     Node(NodeId),
     /// A specific passport (e.g. a specific fraudulent issuance).
     Passport(PassportId),
+    /// A granted authorization-scope condition (CC/SIGNATIF §12
+    /// `revocation-condition-withdrawal`): the `condition` granted to
+    /// `node` is withdrawn from the declaration's effect moment; acts
+    /// verified under scopes that still carry the condition fail from
+    /// then on (the verification pipeline consults
+    /// [`RevocationLedger::withdrawn_conditions_at`]).
+    Condition {
+        /// The node whose delegation carried the condition.
+        node: NodeId,
+        /// The withdrawn condition.
+        condition: ScopeCondition,
+    },
 }
 
 impl RevokedSubject {
@@ -130,6 +150,9 @@ impl RevokedSubject {
             RevokedSubject::Key(k) => format!("key:{k}"),
             RevokedSubject::Node(n) => format!("node:{n}"),
             RevokedSubject::Passport(p) => format!("passport:{p}"),
+            RevokedSubject::Condition { node, condition } => {
+                format!("condition:{node}:`{condition}`")
+            }
         }
     }
 }
@@ -387,6 +410,32 @@ impl RevocationLedger {
         self.revocations
             .iter()
             .filter(move |r| matches!(&r.subject, RevokedSubject::Passport(p) if p == passport))
+    }
+
+    /// The scope conditions declared withdrawn against `node` and in
+    /// force at `at` (CC/SIGNATIF §12 `revocation-condition-withdrawal`):
+    /// declarations with subject
+    /// [`RevokedSubject::Condition`](Self::Condition) whose distrust
+    /// window contains `at`. The verification pipeline feeds these to
+    /// the scope-condition check, so an act verified under a scope that
+    /// still carries a withdrawn condition fails from the withdrawal's
+    /// effect moment onward — the §12 withdrawal propagation, expressed
+    /// through verify-time condition evaluation instead of per-artifact
+    /// rewriting (conditions are never satisfied "on the record").
+    pub fn withdrawn_conditions_at(&self, node: &NodeId, at: Timestamp) -> Vec<&ScopeCondition> {
+        let mut out = Vec::new();
+        for r in &self.revocations {
+            if let RevokedSubject::Condition {
+                node: subject_node,
+                condition,
+            } = &r.subject
+            {
+                if subject_node == node && r.voids(at) {
+                    out.push(condition);
+                }
+            }
+        }
+        out
     }
 
     /// Standing of a key's acts at `at`, restricted to declarations
@@ -747,5 +796,59 @@ mod tests {
         assert!(ledger
             .current_taints(&pid(3), &issuers, &provenance)
             .voids_ab_initio());
+    }
+
+    #[test]
+    fn condition_withdrawal_declares_and_propagates() {
+        use crate::scope::ScopeCondition;
+        let node = NodeId::new("eu-notified").unwrap();
+        let condition = ScopeCondition::Predicate {
+            expression_ref: "urn:unidpp:rule:third-party-audit".into(),
+        };
+        let mut ledger = RevocationLedger::new();
+        // Withdrawal is prospective: no quorum attestation required.
+        ledger
+            .declare(Revocation {
+                subject: RevokedSubject::Condition {
+                    node: node.clone(),
+                    condition: condition.clone(),
+                },
+                reason: RevocationReason::ConditionWithdrawal,
+                declared_at: t(1000),
+                window: Interval::starting(t(1000)),
+                declared_by: NodeId::new("root").unwrap(),
+                quorum: None,
+            })
+            .unwrap();
+        assert!(!RevocationReason::ConditionWithdrawal.is_retroactive());
+        assert_eq!(
+            RevocationReason::ConditionWithdrawal.token(),
+            "condition-withdrawal"
+        );
+        assert_eq!(
+            RevocationReason::ConditionWithdrawal.taint_kind(),
+            TaintKind::Known(KnownTaint::Revoked)
+        );
+        // Before the effect moment: the condition still authorizes.
+        assert!(ledger.withdrawn_conditions_at(&node, t(999)).is_empty());
+        // From the effect moment on: withdrawn for that node.
+        assert_eq!(
+            ledger.withdrawn_conditions_at(&node, t(1000)),
+            vec![&condition]
+        );
+        assert_eq!(
+            ledger.withdrawn_conditions_at(&node, t(5000)),
+            vec![&condition]
+        );
+        // Other nodes are untouched (withdrawal targets the grantee).
+        let other = NodeId::new("some-issuer").unwrap();
+        assert!(ledger.withdrawn_conditions_at(&other, t(5000)).is_empty());
+        // The subject label names the withdrawn condition.
+        assert!(RevokedSubject::Condition {
+            node: node.clone(),
+            condition
+        }
+        .label()
+        .contains("condition:eu-notified"));
     }
 }

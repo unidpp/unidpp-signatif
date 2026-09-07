@@ -1,6 +1,6 @@
 //! The signature layer: real multi-suite signing and verification over
-//! the core's canonical payloads, co-signature aggregation, and
-//! policy-scoped acceptance.
+//! the core's canonical payloads, co-signature aggregation, composite
+//! (AND-composition) signatures, and policy-scoped acceptance.
 //!
 //! The core (`unidpp-model::trust`) frames signature slots and their
 //! byte budgets; this layer computes and verifies actual signatures for
@@ -9,6 +9,20 @@
 //! their suites parse, frame, and budget exactly as the core specifies,
 //! but computing them is deferred to binding crates (a GM-SM2
 //! implementation and a FIPS 204 module) — see [`Suite::deferral`].
+//! **SLH-DSA (128s/192s) is framed and explicitly unsupported** pending
+//! its binding: the `slh-dsa` crate feature is a stub seam, and every
+//! path refuses with [`SignatifError::Unsupported`] — see
+//! [`Suite::unsupported`].
+//!
+//! Two aggregation forms coexist (CC/SIGNATIF §3.7.3 vs §3.7.4):
+//!
+//! - the **collection** form ([`CoSignature::slots`]): independent
+//!   slots over one payload, acceptance policy-scoped (any-allowed by
+//!   default) — the multi-jurisdiction co-signature model;
+//! - the **composite** form ([`CoSignature::composites`]):
+//!   [`CompositeSignature`], a cryptographic AND-composition — one
+//!   logical signature from two or more member suites, valid only when
+//!   *every* member verifies — the hybrid classical/PQ migration form.
 //!
 //! Policy-scoped acceptance: a co-signature passes if **any** suite the
 //! verifier's [`AcceptancePolicy`] allows verifies under a registered
@@ -48,11 +62,17 @@ pub enum Suite {
     MlDsa65,
     /// ML-DSA-87 (framing only — deferred to a FIPS 204 binding).
     MlDsa87,
+    /// SLH-DSA-SHA2-128s (FIPS 205; framed, computation gated behind
+    /// the `slh-dsa` crate feature — see [`Suite::unsupported`]).
+    SlhDsa128s,
+    /// SLH-DSA-SHA2-192s (FIPS 205; framed, computation gated behind
+    /// the `slh-dsa` crate feature — see [`Suite::unsupported`]).
+    SlhDsa192s,
 }
 
 impl Suite {
     /// All suites, canonical order (infrastructure suites first, then
-    /// the core's table order).
+    /// the core's table order, then the PQ stateless-hash extensions).
     pub const ALL: &'static [Suite] = &[
         Suite::Ed25519,
         Suite::EcdsaP256,
@@ -60,6 +80,8 @@ impl Suite {
         Suite::MlDsa44,
         Suite::MlDsa65,
         Suite::MlDsa87,
+        Suite::SlhDsa128s,
+        Suite::SlhDsa192s,
     ];
 
     /// Canonical token.
@@ -71,6 +93,8 @@ impl Suite {
             Suite::MlDsa44 => "ml-dsa-44",
             Suite::MlDsa65 => "ml-dsa-65",
             Suite::MlDsa87 => "ml-dsa-87",
+            Suite::SlhDsa128s => "slh-dsa-128s",
+            Suite::SlhDsa192s => "slh-dsa-192s",
         }
     }
 
@@ -84,8 +108,8 @@ impl Suite {
             .ok_or_else(|| SignatifError::invalid(format!("unknown suite `{s}`")))
     }
 
-    /// Map to the core carrier-framing suite; `None` for Ed25519 (the
-    /// extension suite has no core carrier slot).
+    /// Map to the core carrier-framing suite; `None` for Ed25519 and
+    /// the SLH-DSA extensions (they have no core carrier slot).
     pub fn to_core(self) -> Option<unidpp_model::SignatureSuite> {
         match self {
             Suite::EcdsaP256 => Some(unidpp_model::SignatureSuite::EcdsaP256),
@@ -93,7 +117,7 @@ impl Suite {
             Suite::MlDsa44 => Some(unidpp_model::SignatureSuite::MlDsa44),
             Suite::MlDsa65 => Some(unidpp_model::SignatureSuite::MlDsa65),
             Suite::MlDsa87 => Some(unidpp_model::SignatureSuite::MlDsa87),
-            Suite::Ed25519 => None,
+            Suite::Ed25519 | Suite::SlhDsa128s | Suite::SlhDsa192s => None,
         }
     }
 
@@ -113,19 +137,40 @@ impl Suite {
         matches!(self, Suite::Ed25519 | Suite::EcdsaP256)
     }
 
+    /// Whether this suite is a post-quantum algorithm (ML-DSA per
+    /// FIPS 204, SLH-DSA per FIPS 205) — the migration-phase input of
+    /// the deployment manifest (CC/SIGNATIF §18/§20).
+    pub fn is_post_quantum(self) -> bool {
+        matches!(
+            self,
+            Suite::MlDsa44
+                | Suite::MlDsa65
+                | Suite::MlDsa87
+                | Suite::SlhDsa128s
+                | Suite::SlhDsa192s
+        )
+    }
+
     /// Canonical signature length in bytes (mirrors the core's framing
-    /// budget table; Ed25519 is 64).
+    /// budget table; Ed25519 is 64; SLH-DSA per FIPS 205: 128s = 7856,
+    /// 192s = 16224).
     pub fn signature_len(self) -> usize {
         match self {
             Suite::Ed25519 => 64,
+            Suite::SlhDsa128s => 7856,
+            Suite::SlhDsa192s => 16224,
             other => other.to_core().map(|c| c.signature_len()).unwrap_or(64),
         }
     }
 
-    /// One-byte suite code (`to_core` where defined; Ed25519 takes 6).
+    /// One-byte suite code (`to_core` where defined; Ed25519 takes 6,
+    /// SLH-DSA-128s 7, SLH-DSA-192s 8 — the extension codes after the
+    /// core's 1–5).
     pub fn code(self) -> u8 {
         match self {
             Suite::Ed25519 => 6,
+            Suite::SlhDsa128s => 7,
+            Suite::SlhDsa192s => 8,
             other => other.to_core().map(|c| c.code()).unwrap_or(6),
         }
     }
@@ -141,6 +186,40 @@ impl Suite {
                 "ML-DSA (FIPS 204) computation requires a PQ binding crate; SIGNATIF \
                  carries the core's framing and budget math only",
             ),
+            _ => None,
+        }
+    }
+
+    /// Why this suite is **explicitly unsupported** here (as opposed to
+    /// [`Suite::deferral`], which names a deliberate binding seam).
+    ///
+    /// SLH-DSA (FIPS 205) is in the standard's post-quantum algorithm
+    /// table, so the suites are framed (token, budget, wire code) — but
+    /// no computation exists under the default feature set. The
+    /// `slh-dsa` crate feature is the integration seam: it is
+    /// deliberately a **stub** (no PQ crate dependency yet — pending
+    /// build-size and supply-chain review of the FIPS 205 candidates),
+    /// so even with the feature enabled the suites refuse with this
+    /// error until the binding lands in `keyring`. Every path returns
+    /// an explicit [`SignatifError::Unsupported`]; nothing panics and
+    /// nothing fakes a verification.
+    pub fn unsupported(self) -> Option<&'static str> {
+        match self {
+            Suite::SlhDsa128s | Suite::SlhDsa192s => {
+                if cfg!(feature = "slh-dsa") {
+                    Some(
+                        "the `slh-dsa` feature is enabled but is a stub: the FIPS 205 \
+                         binding crate is deliberately not a dependency yet (build-size and \
+                         supply-chain review pending); wire it into `keyring` to activate \
+                         computation",
+                    )
+                } else {
+                    Some(
+                        "SLH-DSA (FIPS 205) computation requires the `slh-dsa` crate \
+                         feature; enable it to activate the (currently stubbed) SLH-DSA path",
+                    )
+                }
+            }
             _ => None,
         }
     }
@@ -260,14 +339,22 @@ impl SignatureSlot {
     /// Verify this slot's signature value against a public key.
     ///
     /// Framed-only slots are rejected (they carry nothing verifiable);
-    /// deferred suites return [`SignatifError::SuiteDeferred`]; a suite
-    /// that does not match the key's suite is a cryptographic error.
+    /// explicitly-unsupported suites (SLH-DSA without its binding)
+    /// return [`SignatifError::Unsupported`]; deferred suites return
+    /// [`SignatifError::SuiteDeferred`]; a suite that does not match
+    /// the key's suite is a cryptographic error.
     pub fn verify(
         &self,
         domain: SigningDomain,
         payload: &[u8],
         public: &PublicKey,
     ) -> Result<(), SignatifError> {
+        if let Some(detail) = self.suite.unsupported() {
+            return Err(SignatifError::Unsupported {
+                suite: self.suite.to_string(),
+                detail: detail.to_string(),
+            });
+        }
         if let Some(detail) = self.suite.deferral() {
             return Err(SignatifError::SuiteDeferred {
                 suite: self.suite.to_string(),
@@ -316,6 +403,128 @@ impl SignatureSlot {
     }
 }
 
+/// A **composite signature** (CC/SIGNATIF §3.7.4, §9
+/// `algorithms-composite`): one logical signature produced by the
+/// cryptographic **AND-composition** of two or more member suites over
+/// the same domain-framed payload.
+///
+/// Unlike a [`CoSignature`] (a *collection* of independent slots, where
+/// acceptance is policy-scoped — any-allowed by default), a composite
+/// is **all-or-nothing**: [`CompositeSignature::verify`] succeeds only
+/// when *every* member slot verifies; a single failing member fails
+/// the composite. This is the hybrid classical/post-quantum migration
+/// form (e.g. Ed25519 AND ML-DSA over one payload during the
+/// transition window): the verifier gains security only if both
+/// algorithms hold, so both must hold.
+///
+/// The composite is carried on a [`CoSignature`] as an *alternative
+/// slot form* alongside the plain multi-suite collection
+/// ([`CoSignature::composites`]): a verified composite contributes all
+/// its member suites to the report's `verified_suites`; a composite
+/// with any failing member contributes none.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CompositeSignature {
+    /// Domain all members signed in.
+    pub domain: SigningDomain,
+    /// The canonical payload every member signed (same bytes for all).
+    pub payload: Vec<u8>,
+    /// The member slots, one per composing suite.
+    pub members: Vec<SignatureSlot>,
+}
+
+impl CompositeSignature {
+    /// Start a composite over a canonical payload.
+    pub fn new(domain: SigningDomain, payload: &[u8]) -> CompositeSignature {
+        CompositeSignature {
+            domain,
+            payload: payload.to_vec(),
+            members: Vec::new(),
+        }
+    }
+
+    /// Add a member: every member signs the *same* domain-framed
+    /// payload bytes — the AND-composition is over identical inputs.
+    pub fn sign_member(&mut self, key: &KeyPair) -> Result<&mut CompositeSignature, SignatifError> {
+        self.members
+            .push(SignatureSlot::sign(key, self.domain, &self.payload)?);
+        Ok(self)
+    }
+
+    /// Add a framed-only placeholder member (no signature value).
+    pub fn frame_member(&mut self, suite: Suite, key_id: &KeyId) -> &mut CompositeSignature {
+        self.members.push(SignatureSlot::placeholder(suite, key_id));
+        self
+    }
+
+    /// The AND-composition verification: every member must verify
+    /// against its registered key; one failure fails the composite.
+    ///
+    /// Explicitly-unsupported and deferred member suites (and
+    /// unregistered member keys) fail the composite — a composite is
+    /// only as strong as its weakest member.
+    pub fn verify(&self, keys: &crate::graph::KeyDirectory) -> CompositeVerdict {
+        let mut members = Vec::with_capacity(self.members.len());
+        for slot in &self.members {
+            let verdict = match keys.resolve(&slot.key_id) {
+                None => SlotVerdict::UnknownKey {
+                    suite: slot.suite,
+                    key_id: slot.key_id.clone(),
+                },
+                Some(public) => match slot.verify(self.domain, &self.payload, public) {
+                    Ok(()) => SlotVerdict::Verified {
+                        suite: slot.suite,
+                        key_id: slot.key_id.clone(),
+                    },
+                    Err(SignatifError::SuiteDeferred { suite, detail })
+                    | Err(SignatifError::Unsupported { suite, detail }) => SlotVerdict::Deferred {
+                        suite,
+                        key_id: slot.key_id.clone(),
+                        detail,
+                    },
+                    Err(e) => SlotVerdict::Invalid {
+                        suite: slot.suite,
+                        key_id: slot.key_id.clone(),
+                        why: e.to_string(),
+                    },
+                },
+            };
+            members.push(verdict);
+        }
+        let verified = !members.is_empty()
+            && members
+                .iter()
+                .all(|m| matches!(m, SlotVerdict::Verified { .. }));
+        CompositeVerdict { members, verified }
+    }
+
+    /// Distinct member suites (the composition's coverage when it
+    /// verifies).
+    pub fn member_suites(&self) -> BTreeSet<Suite> {
+        self.members.iter().map(|m| m.suite).collect()
+    }
+}
+
+/// Verification outcome of a composite: per-member verdicts plus the
+/// AND-composition result.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CompositeVerdict {
+    /// Per-member verdicts, in member order.
+    pub members: Vec<SlotVerdict>,
+    /// Whether the composite as a whole verified (every member
+    /// verified; an empty composite never verifies).
+    pub verified: bool,
+}
+
+impl CompositeVerdict {
+    /// The first non-verifying member verdict, for diagnostics (`None`
+    /// when the composite verified or is empty).
+    pub fn first_failing_member(&self) -> Option<&SlotVerdict> {
+        self.members
+            .iter()
+            .find(|m| !matches!(m, SlotVerdict::Verified { .. }))
+    }
+}
+
 /// A co-signature: multiple suites' slots over one canonical payload.
 ///
 /// Aggregation is by *collection*, not by cryptographic compression:
@@ -324,14 +533,25 @@ impl SignatureSlot {
 /// [`AcceptancePolicy`]) — the point of co-signing is that a verifier
 /// restricted to one jurisdiction's crypto policy still finds a suite
 /// it can check.
+///
+/// A co-signature may additionally carry **composite signatures**
+/// ([`CompositeSignature`], cryptographic AND-composition) as an
+/// alternative slot form alongside the plain collection: composites
+/// live in [`CoSignature::composites`], verify under their own
+/// all-or-nothing semantics, and contribute their member suites to
+/// `verified_suites` only when the whole composite verifies.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CoSignature {
     /// Domain all slots were signed in.
     pub domain: SigningDomain,
     /// The canonical payload (core canonical bytes for artifact events).
     pub payload: Vec<u8>,
-    /// The slots.
+    /// The plain (collection-form) slots.
     pub slots: Vec<SignatureSlot>,
+    /// The composite (AND-composition-form) signatures carried
+    /// alongside the plain slots.
+    #[serde(default)]
+    pub composites: Vec<CompositeSignature>,
 }
 
 impl CoSignature {
@@ -341,6 +561,7 @@ impl CoSignature {
             domain,
             payload: payload.to_vec(),
             slots: Vec::new(),
+            composites: Vec::new(),
         }
     }
 
@@ -357,43 +578,96 @@ impl CoSignature {
         self
     }
 
-    /// Cryptographically verify every computed slot against a key
-    /// directory; deferred and framed-only slots are reported, not
-    /// fatal.
+    /// Append a composite signature (the AND-composition slot form).
+    /// The composite's domain and payload must match the co-signature's
+    /// own — a composite over different bytes is a structural error.
+    pub fn attach_composite(
+        &mut self,
+        composite: CompositeSignature,
+    ) -> Result<&mut CoSignature, SignatifError> {
+        if composite.domain != self.domain || composite.payload != self.payload {
+            return Err(SignatifError::invalid(
+                "composite signature must cover the co-signature's domain and payload",
+            ));
+        }
+        self.composites.push(composite);
+        Ok(self)
+    }
+
+    /// Build and attach a composite over this co-signature's own
+    /// domain and payload, signing with each of `keys` (the
+    /// AND-composition member set).
+    pub fn sign_composite_by(
+        &mut self,
+        keys: &[&KeyPair],
+    ) -> Result<&mut CoSignature, SignatifError> {
+        let mut composite = CompositeSignature::new(self.domain, &self.payload);
+        for key in keys {
+            composite.sign_member(key)?;
+        }
+        self.attach_composite(composite)
+    }
+
+    /// Cryptographically verify every computed slot and composite
+    /// against a key directory; deferred and framed-only slots are
+    /// reported, not fatal.
+    ///
+    /// Composites verify under AND-composition: a verifying composite
+    /// contributes *all* its member suites to `verified_suites`; a
+    /// composite with any failing member contributes none.
     pub fn verify(&self, keys: &crate::graph::KeyDirectory) -> CoSignatureReport {
         let mut slots = Vec::with_capacity(self.slots.len());
         let mut verified_suites = BTreeSet::new();
         for slot in &self.slots {
-            let verdict = match keys.resolve(&slot.key_id) {
-                None => SlotVerdict::UnknownKey {
-                    suite: slot.suite,
-                    key_id: slot.key_id.clone(),
-                },
-                Some(public) => match slot.verify(self.domain, &self.payload, public) {
-                    Ok(()) => {
-                        verified_suites.insert(slot.suite);
-                        SlotVerdict::Verified {
-                            suite: slot.suite,
-                            key_id: slot.key_id.clone(),
-                        }
-                    }
-                    Err(SignatifError::SuiteDeferred { suite, detail }) => SlotVerdict::Deferred {
-                        suite,
-                        key_id: slot.key_id.clone(),
-                        detail,
-                    },
-                    Err(e) => SlotVerdict::Invalid {
-                        suite: slot.suite,
-                        key_id: slot.key_id.clone(),
-                        why: e.to_string(),
-                    },
-                },
-            };
+            let verdict = Self::slot_verdict(slot, self.domain, &self.payload, keys);
+            if let SlotVerdict::Verified { suite, .. } = &verdict {
+                verified_suites.insert(*suite);
+            }
             slots.push(verdict);
+        }
+        let mut composites = Vec::with_capacity(self.composites.len());
+        for composite in &self.composites {
+            let verdict = composite.verify(keys);
+            if verdict.verified {
+                verified_suites.extend(composite.member_suites());
+            }
+            composites.push(verdict);
         }
         CoSignatureReport {
             slots,
             verified_suites,
+            composites,
+        }
+    }
+
+    fn slot_verdict(
+        slot: &SignatureSlot,
+        domain: SigningDomain,
+        payload: &[u8],
+        keys: &crate::graph::KeyDirectory,
+    ) -> SlotVerdict {
+        match keys.resolve(&slot.key_id) {
+            None => SlotVerdict::UnknownKey {
+                suite: slot.suite,
+                key_id: slot.key_id.clone(),
+            },
+            Some(public) => match slot.verify(domain, payload, public) {
+                Ok(()) => SlotVerdict::Verified {
+                    suite: slot.suite,
+                    key_id: slot.key_id.clone(),
+                },
+                Err(SignatifError::SuiteDeferred { suite, detail })
+                | Err(SignatifError::Unsupported { suite, detail }) => SlotVerdict::Deferred {
+                    suite,
+                    key_id: slot.key_id.clone(),
+                    detail,
+                },
+                Err(e) => SlotVerdict::Invalid {
+                    suite: slot.suite,
+                    key_id: slot.key_id.clone(),
+                    why: e.to_string(),
+                },
+            },
         }
     }
 }
@@ -441,8 +715,13 @@ pub enum SlotVerdict {
 pub struct CoSignatureReport {
     /// Per-slot verdicts, in slot order.
     pub slots: Vec<SlotVerdict>,
-    /// Distinct suites with at least one verified slot.
+    /// Distinct suites with at least one verified slot (a verifying
+    /// composite contributes all its member suites).
     pub verified_suites: BTreeSet<Suite>,
+    /// Per-composite verdicts (the AND-composition slot form), in
+    /// composite order.
+    #[serde(default)]
+    pub composites: Vec<CompositeVerdict>,
 }
 
 impl CoSignatureReport {
@@ -454,7 +733,7 @@ impl CoSignatureReport {
             .count()
     }
 
-    /// Whether at least one slot verified.
+    /// Whether at least one slot or composite verified.
     pub fn any_verified(&self) -> bool {
         !self.verified_suites.is_empty()
     }
@@ -462,6 +741,12 @@ impl CoSignatureReport {
     /// Distinct verified-suite count.
     pub fn distinct_verified_suites(&self) -> usize {
         self.verified_suites.len()
+    }
+
+    /// Whether every carried composite verified (vacuously true when
+    /// none are carried).
+    pub fn all_composites_verified(&self) -> bool {
+        self.composites.iter().all(|c| c.verified)
     }
 }
 
@@ -718,5 +1003,138 @@ mod tests {
         let refs: Vec<&[u8]> = fields.iter().map(|f| f.as_slice()).collect();
         let bytes = canonical_fields(&refs);
         assert_eq!(canonical_field_reader(&bytes).unwrap(), fields);
+    }
+
+    #[test]
+    fn composite_signatures_verify_under_and_composition() {
+        let ed = KeyPair::seeded(Suite::Ed25519, b"comp-1").unwrap();
+        let p256 = KeyPair::seeded(Suite::EcdsaP256, b"comp-2").unwrap();
+        let mut dir = KeyDirectory::new();
+        dir.register(ed.public());
+        dir.register(p256.public());
+
+        let mut composite =
+            CompositeSignature::new(SigningDomain::ArtifactEvent, b"canonical body");
+        composite.sign_member(&ed).unwrap();
+        composite.sign_member(&p256).unwrap();
+        let verdict = composite.verify(&dir);
+        assert!(verdict.verified, "all members verify: composite holds");
+        assert_eq!(verdict.members.len(), 2);
+        assert!(verdict.first_failing_member().is_none());
+        assert_eq!(composite.member_suites().len(), 2);
+
+        // AND-composition: tamper ONE member — the composite fails even
+        // though the other member still verifies.
+        let mut broken = composite.clone();
+        broken.members[0].signature.as_mut().unwrap()[0] ^= 0x01;
+        let verdict = broken.verify(&dir);
+        assert!(!verdict.verified);
+        assert!(verdict.first_failing_member().is_some());
+
+        // An unregistered member key fails the composite (fails closed).
+        let stranger = KeyPair::seeded(Suite::Ed25519, b"comp-3").unwrap();
+        let mut unknown = composite.clone();
+        unknown.sign_member(&stranger).unwrap();
+        assert!(!unknown.verify(&dir).verified);
+
+        // A framed-only member fails the composite.
+        let mut framed = CompositeSignature::new(SigningDomain::ArtifactEvent, b"canonical body");
+        framed.sign_member(&ed).unwrap();
+        framed.frame_member(Suite::MlDsa65, p256.key_id());
+        let verdict = framed.verify(&dir);
+        assert!(!verdict.verified);
+        assert!(matches!(
+            verdict.first_failing_member(),
+            Some(SlotVerdict::Deferred { .. })
+        ));
+
+        // An empty composite never verifies.
+        let empty = CompositeSignature::new(SigningDomain::ArtifactEvent, b"x");
+        assert!(!empty.verify(&dir).verified);
+    }
+
+    #[test]
+    fn composite_slot_form_counts_toward_acceptance() {
+        let ed = KeyPair::seeded(Suite::Ed25519, b"cs-1").unwrap();
+        let p256 = KeyPair::seeded(Suite::EcdsaP256, b"cs-2").unwrap();
+        let mut dir = KeyDirectory::new();
+        dir.register(ed.public());
+        dir.register(p256.public());
+
+        // A co-signature carrying ONLY a composite (no plain slots).
+        let mut co = CoSignature::new(SigningDomain::ArtifactEvent, b"body");
+        co.sign_composite_by(&[&ed, &p256]).unwrap();
+        assert!(co.slots.is_empty());
+        assert_eq!(co.composites.len(), 1);
+        let report = co.verify(&dir);
+        assert!(report.all_composites_verified());
+        // The verifying composite contributes both member suites.
+        assert_eq!(report.distinct_verified_suites(), 2);
+        // One composite satisfies the two-distinct-suite policy.
+        assert!(AcceptancePolicy::multi_signed()
+            .evaluate(&report)
+            .is_accepted());
+
+        // Tampering one member drops BOTH suites: the composite
+        // contributes nothing when it fails as a whole.
+        let mut tampered = co.clone();
+        tampered.composites[0].members[1]
+            .signature
+            .as_mut()
+            .unwrap()[0] ^= 0x01;
+        let report = tampered.verify(&dir);
+        assert!(!report.all_composites_verified());
+        assert!(!report.any_verified());
+        assert!(!AcceptancePolicy::any_computed()
+            .evaluate(&report)
+            .is_accepted());
+
+        // A composite over different bytes cannot be attached.
+        let mut foreign = CompositeSignature::new(SigningDomain::TreeHead, b"body");
+        foreign.sign_member(&ed).unwrap();
+        let mut co2 = CoSignature::new(SigningDomain::ArtifactEvent, b"body");
+        assert!(co2.attach_composite(foreign).is_err());
+    }
+
+    #[test]
+    fn slh_dsa_suites_frame_refusing_computation() {
+        // Tokens parse and round-trip; the suites are in the table.
+        for (suite, token, len, code) in [
+            (Suite::SlhDsa128s, "slh-dsa-128s", 7856usize, 7u8),
+            (Suite::SlhDsa192s, "slh-dsa-192s", 16224, 8),
+        ] {
+            assert!(Suite::ALL.contains(&suite));
+            assert_eq!(suite.as_str(), token);
+            assert_eq!(Suite::parse_token(token).unwrap(), suite);
+            assert_eq!(Suite::parse_token(&token.to_uppercase()).unwrap(), suite);
+            assert_eq!(suite.signature_len(), len);
+            assert_eq!(suite.code(), code);
+            assert_eq!(suite.to_core(), None, "no core carrier slot");
+            assert!(suite.is_post_quantum());
+            assert!(!suite.is_computed());
+            // Deferral vs unsupported: SLH-DSA is unsupported (feature
+            // seam), not deferred (binding seam).
+            assert!(suite.unsupported().is_some());
+            assert_eq!(suite.deferral(), None);
+            // Keygen refuses with the explicit Unsupported error.
+            let err = KeyPair::seeded(suite, b"seed").unwrap_err();
+            assert!(matches!(err, SignatifError::Unsupported { .. }), "{err}");
+            assert!(err.to_string().contains("slh-dsa"), "{err}");
+        }
+        // Framing-only slots in a co-signature report as Deferred with
+        // the unsupported detail — never faked, never fatal.
+        let ed = KeyPair::seeded(Suite::Ed25519, b"slh").unwrap();
+        let mut dir = KeyDirectory::new();
+        dir.register(ed.public());
+        let mut co = CoSignature::new(SigningDomain::ArtifactEvent, b"body");
+        co.frame_by(Suite::SlhDsa128s, ed.key_id());
+        let report = co.verify(&dir);
+        match &report.slots[0] {
+            SlotVerdict::Deferred { suite, detail, .. } => {
+                assert_eq!(suite, "slh-dsa-128s");
+                assert!(detail.contains("slh-dsa"), "{detail}");
+            }
+            other => panic!("expected Deferred, got {other:?}"),
+        }
     }
 }

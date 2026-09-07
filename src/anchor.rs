@@ -1,6 +1,7 @@
 //! Transparency anchoring: an append-only Merkle log with inclusion and
-//! consistency proofs, signed tree heads, salted commitment leaves, and
-//! a log-of-logs M-of-K master list.
+//! consistency proofs, signed tree heads, salted commitment leaves, a
+//! log-of-logs M-of-K master list, and external time anchoring of tree
+//! heads (CC/SIGNATIF §13 `transparency-anchoring`).
 //!
 //! Hashing follows the Confium transparency-log specification
 //! (specs/specs/42-transparency-log.adoc, "RFC 6962 Merkle tree"):
@@ -256,6 +257,7 @@ impl TransparencyLog {
             timestamp: at,
             root,
             signature: slot,
+            external_anchor: None,
         })
     }
 }
@@ -275,6 +277,14 @@ pub struct SignedTreeHead {
     pub root: Hash,
     /// Operator's signature slot.
     pub signature: SignatureSlot,
+    /// The external time anchor of this head (CC/SIGNATIF §13
+    /// `transparency-anchoring`): the commitment the operator produced
+    /// for submission to an external, irrefutable time source. `None`
+    /// until [`SignedTreeHead::anchored_externally`] is used. The
+    /// anchor commits *to* the signed head bytes (the operator
+    /// signature is not weakened by attaching it afterwards).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_anchor: Option<ExternalAnchor>,
 }
 
 impl SignedTreeHead {
@@ -317,6 +327,221 @@ impl SignedTreeHead {
         let inner = w.into_bytes();
         sha256(&[b"UNIDPP-SIGNATIF/WITNESS-STH", &inner])
     }
+
+    /// Produce and attach an external time anchor for this head
+    /// (CC/SIGNATIF §13 `transparency-anchoring`): builds the
+    /// commitment payload for `method` (see
+    /// [`external_anchor_payload`]) and records it on the head. The
+    /// anchor commits *to* the head's canonical bytes, so attaching it
+    /// after the operator's signature is sound; any later mutation of
+    /// the head breaks [`SignedTreeHead::verify_external_anchor`].
+    pub fn anchored_externally(mut self, method: ExternalAnchorMethod) -> SignedTreeHead {
+        self.external_anchor = Some(external_anchor_payload(&self, &method));
+        self
+    }
+
+    /// Verify this head's attached external anchor (if any) against the
+    /// head's own bytes — the no-network half of the external-anchoring
+    /// check (that the *completed* proof from the time source really
+    /// covers this payload is verified by the deployment against the
+    /// source's proof format).
+    pub fn verify_external_anchor(&self) -> Result<(), SignatifError> {
+        match &self.external_anchor {
+            None => Err(SignatifError::Transparency(format!(
+                "tree head of log `{}` carries no external anchor",
+                self.log_id
+            ))),
+            Some(anchor) => verify_external_anchor(anchor, self),
+        }
+    }
+}
+
+/// Where a tree head is anchored for irrefutable external time
+/// (CC/SIGNATIF §13 `transparency-anchoring`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ExternalAnchorMethod {
+    /// An RFC 3161 time-stamp authority: the payload is a minimal DER
+    /// `TimeStampReq` carrying SHA-256 of the head's canonical bytes.
+    Rfc3161 {
+        /// The TSA endpoint the request bytes are submitted to.
+        tsa_url: String,
+    },
+    /// An OpenTimestamps-style lite commitment: SHA-256 of the head's
+    /// canonical bytes plus a rendezvous point (a calendar/aggregator
+    /// URI that batches commitments into an upstream anchor).
+    OtsLite {
+        /// The rendezvous URI (calendar/aggregator) to submit the
+        /// digest to.
+        rendezvous: String,
+    },
+}
+
+impl ExternalAnchorMethod {
+    /// Stable method token (part of the OTS-lite payload bytes).
+    pub fn token(&self) -> &'static str {
+        match self {
+            ExternalAnchorMethod::Rfc3161 { .. } => "rfc3161",
+            ExternalAnchorMethod::OtsLite { .. } => "ots-lite",
+        }
+    }
+
+    /// The submission target (TSA URL or rendezvous URI) — where the
+    /// payload is sent; the library itself never performs the call.
+    pub fn submission_target(&self) -> &str {
+        match self {
+            ExternalAnchorMethod::Rfc3161 { tsa_url } => tsa_url,
+            ExternalAnchorMethod::OtsLite { rendezvous } => rendezvous,
+        }
+    }
+}
+
+/// An external time-anchor commitment: the exact bytes a log operator
+/// submits to an external time source, plus the digest they commit to.
+///
+/// **No network calls are made by this library.** The documented
+/// submission flow (CC/SIGNATIF §13): (1) the operator builds the
+/// payload with [`external_anchor_payload`]; (2) submits `payload` to
+/// [`ExternalAnchorMethod::submission_target`] — an RFC 3161 TSA via
+/// HTTP (content-type `application/timestamp-query`) or an
+/// OpenTimestamps-style calendar; (3) stores the returned proof
+/// (RFC 3161 `TimeStampResp` / OTS proof file) deployment-side; (4)
+/// verification of the completed proof against the time source is a
+/// deployment concern (it needs the source's trust anchors), while
+/// [`verify_external_anchor`] checks — offline — that a given anchor
+/// really commits to a given tree head.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExternalAnchor {
+    /// The anchoring method (and its submission target).
+    pub method: ExternalAnchorMethod,
+    /// SHA-256 of the head's canonical bytes — the committed digest.
+    pub digest: Hash,
+    /// Request nonce (RFC 3161: binds the response to this request;
+    /// OTS-lite carries 0). Derived deterministically from the digest
+    /// so the payload is reproducible; deployments may substitute a
+    /// CSPRNG nonce before submission.
+    pub nonce: u64,
+    /// The exact bytes to submit.
+    pub payload: Vec<u8>,
+}
+
+/// Build the external-anchor commitment payload for a signed tree
+/// head: `sha256(head-canonical-bytes)` plus the method's submission
+/// framing.
+///
+/// - [`ExternalAnchorMethod::OtsLite`]: canonical length-prefixed
+///   bytes `tag || rendezvous || digest` (the OpenTimestamps-style
+///   "digest + rendezvous point" commitment);
+/// - [`ExternalAnchorMethod::Rfc3161`]: a minimal DER `TimeStampReq`
+///   (`version=1`, SHA-256 `messageImprint`, `nonce`) ready for
+///   `application/timestamp-query` submission.
+pub fn external_anchor_payload(
+    sth: &SignedTreeHead,
+    method: &ExternalAnchorMethod,
+) -> ExternalAnchor {
+    let digest = sha256(&[&SignedTreeHead::canonical_bytes(
+        &sth.log_id,
+        sth.tree_size,
+        sth.timestamp,
+        &sth.root,
+    )]);
+    let nonce = u64::from_be_bytes(digest.as_bytes()[..8].try_into().unwrap());
+    let payload = match method {
+        ExternalAnchorMethod::OtsLite { rendezvous } => {
+            let mut w = CanonicalWriter::new();
+            w.write_str("UNIDPP-SIGNATIF/EXTERNAL-ANCHOR");
+            w.write_str("ots-lite");
+            w.write_str(rendezvous);
+            w.write_hash(&digest);
+            w.into_bytes()
+        }
+        ExternalAnchorMethod::Rfc3161 { .. } => rfc3161_timestamp_req(&digest, nonce),
+    };
+    ExternalAnchor {
+        method: method.clone(),
+        digest,
+        nonce,
+        payload,
+    }
+}
+
+/// Verify that an external anchor commits to exactly this tree head:
+/// the anchor's digest and payload are recomputed from the head's
+/// canonical bytes under the anchor's own method and compared. A head
+/// with a different size, timestamp, or root produces a different
+/// digest, so any post-hoc mutation of the head is caught offline.
+pub fn verify_external_anchor(
+    anchor: &ExternalAnchor,
+    sth: &SignedTreeHead,
+) -> Result<(), SignatifError> {
+    let expected = external_anchor_payload(sth, &anchor.method);
+    if anchor.digest != expected.digest {
+        return Err(SignatifError::Transparency(format!(
+            "external anchor commits to digest {}, but the head hashes to {}",
+            anchor.digest, expected.digest
+        )));
+    }
+    if anchor.payload != expected.payload {
+        return Err(SignatifError::Transparency(
+            "external anchor payload does not match the head (bytes differ)".into(),
+        ));
+    }
+    Ok(())
+}
+
+// ---- Minimal DER (RFC 3161 timestamp request) -------------------------
+//
+// Hand-rolled to keep the crate dependency-free (the request is three
+// nested SEQUENCEs: version, messageImprint, nonce).
+
+/// DER length octets (short form below 128, long form above).
+fn der_len(len: usize) -> Vec<u8> {
+    if len < 0x80 {
+        vec![len as u8]
+    } else {
+        let mut bytes = Vec::new();
+        let mut n = len;
+        while n > 0 {
+            bytes.push((n & 0xff) as u8);
+            n >>= 8;
+        }
+        bytes.reverse();
+        let mut out = vec![0x80 | bytes.len() as u8];
+        out.extend_from_slice(&bytes);
+        out
+    }
+}
+
+/// One DER TLV (tag, length, content).
+fn der_tlv(tag: u8, content: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + content.len());
+    out.push(tag);
+    out.extend_from_slice(&der_len(content.len()));
+    out.extend_from_slice(content);
+    out
+}
+
+/// Minimal RFC 3161 `TimeStampReq`: version 1, SHA-256 messageImprint
+/// (OID 2.16.840.1.101.3.4.2.1 with NULL parameters), nonce. No
+/// certReq, no extensions.
+fn rfc3161_timestamp_req(digest: &Hash, nonce: u64) -> Vec<u8> {
+    let version = der_tlv(0x02, &[1]); // INTEGER 1
+    let oid = der_tlv(
+        0x06,
+        &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01],
+    );
+    let null = der_tlv(0x05, &[]);
+    let mut alg_id_content = oid;
+    alg_id_content.extend_from_slice(&null);
+    let alg_id = der_tlv(0x30, &alg_id_content);
+    let hashed_message = der_tlv(0x04, digest.as_bytes());
+    let mut imprint_content = alg_id;
+    imprint_content.extend_from_slice(&hashed_message);
+    let message_imprint = der_tlv(0x30, &imprint_content);
+    let nonce_int = der_tlv(0x02, &nonce.to_be_bytes());
+    let mut req_content = version;
+    req_content.extend_from_slice(&message_imprint);
+    req_content.extend_from_slice(&nonce_int);
+    der_tlv(0x30, &req_content)
 }
 
 /// Verify an inclusion proof: reconstruct the root from the entry's
@@ -898,5 +1123,117 @@ mod tests {
         let json = serde_json::to_string(&log).unwrap();
         assert!(!json.contains("car-42"));
         assert!(json.contains("\"salt_ref\":0"));
+    }
+
+    /// A signed tree head for the external-anchoring tests.
+    fn sample_sth() -> (SignedTreeHead, KeyPair) {
+        let mut log = TransparencyLog::new("t");
+        for i in 0..4u8 {
+            log.append(LogEntry::public(sha256(&[&[i]])));
+        }
+        let operator = KeyPair::seeded(Suite::Ed25519, b"anchor-op").unwrap();
+        (
+            log.sign_tree_head(Timestamp::from_secs(7000), &operator)
+                .unwrap(),
+            operator,
+        )
+    }
+
+    #[test]
+    fn external_anchor_commits_to_the_head() {
+        let (sth, _op) = sample_sth();
+        let ots = ExternalAnchorMethod::OtsLite {
+            rendezvous: "https://calendar.unidpp.example/anchor".into(),
+        };
+        let anchor = external_anchor_payload(&sth, &ots);
+        // The digest is SHA-256 of the head's canonical bytes.
+        assert_eq!(
+            anchor.digest,
+            sha256(&[&SignedTreeHead::canonical_bytes(
+                &sth.log_id,
+                sth.tree_size,
+                sth.timestamp,
+                &sth.root
+            )])
+        );
+        // Deterministic: same head + method, same payload.
+        assert_eq!(anchor.payload, external_anchor_payload(&sth, &ots).payload);
+        // The method carries its submission target; no network happens.
+        assert_eq!(anchor.method.token(), "ots-lite");
+        assert_eq!(anchor.method.submission_target(), ots.submission_target());
+        assert!(anchor.nonce > 0);
+        // Verification: ok against the very head; broken against any
+        // mutation of it (size, timestamp, root).
+        assert!(verify_external_anchor(&anchor, &sth).is_ok());
+        let grown = SignedTreeHead {
+            tree_size: sth.tree_size + 1,
+            ..sth.clone()
+        };
+        assert!(verify_external_anchor(&anchor, &grown).is_err());
+        let later = SignedTreeHead {
+            timestamp: Timestamp::from_secs(sth.timestamp.secs + 1),
+            ..sth.clone()
+        };
+        assert!(verify_external_anchor(&anchor, &later).is_err());
+        // A different method commits differently (different payload
+        // framing of the same digest).
+        let tsa = ExternalAnchorMethod::Rfc3161 {
+            tsa_url: "https://tsa.example.org".into(),
+        };
+        let other = external_anchor_payload(&sth, &tsa);
+        assert_eq!(other.digest, anchor.digest);
+        assert_ne!(other.payload, anchor.payload);
+        // Attaching to the head keeps the operator signature intact
+        // and verifies; a head without an anchor reports it.
+        let anchored = sth.clone().anchored_externally(ots);
+        let operator = KeyPair::seeded(Suite::Ed25519, b"anchor-op").unwrap();
+        assert!(anchored.verify(operator.public()).is_ok());
+        assert!(anchored.verify_external_anchor().is_ok());
+        assert!(sth.verify_external_anchor().is_err());
+        // Serde round trip preserves the anchor.
+        let json = serde_json::to_string(&anchored).unwrap();
+        let back: SignedTreeHead = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, anchored);
+    }
+
+    #[test]
+    fn rfc3161_request_is_well_formed_der() {
+        let (sth, _op) = sample_sth();
+        let tsa = ExternalAnchorMethod::Rfc3161 {
+            tsa_url: "https://tsa.example.org".into(),
+        };
+        let anchor = external_anchor_payload(&sth, &tsa);
+        let p = &anchor.payload;
+        // Outer structure: SEQUENCE.
+        assert_eq!(p[0], 0x30);
+        // Contains the SHA-256 algorithm identifier OID
+        // (2.16.840.1.101.3.4.2.1) and the 32-byte digest as the
+        // messageImprint OCTET STRING.
+        let oid: &[u8] = &[
+            0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01,
+        ];
+        let oid_pos = p
+            .windows(oid.len())
+            .position(|w| w == oid)
+            .expect("SHA-256 OID must be present");
+        let octet_tag = oid_pos + oid.len() + 2; // skip OID TLV + NULL TLV (05 00) + OCTET tag
+        assert_eq!(p[octet_tag], 0x04, "hashedMessage must be an OCTET STRING");
+        assert_eq!(p[octet_tag + 1], 32, "SHA-256 digest is 32 bytes");
+        assert_eq!(
+            &p[octet_tag + 2..octet_tag + 2 + 32],
+            anchor.digest.as_bytes(),
+            "the request carries the committed digest"
+        );
+        // The nonce is derived from the digest (reproducible).
+        assert_eq!(
+            anchor.nonce,
+            u64::from_be_bytes(anchor.digest.as_bytes()[..8].try_into().unwrap())
+        );
+        // Structural verification against the head.
+        assert!(verify_external_anchor(&anchor, &sth).is_ok());
+        // A truncated payload is rejected.
+        let mut tampered = anchor.clone();
+        tampered.payload.truncate(tampered.payload.len() - 1);
+        assert!(verify_external_anchor(&tampered, &sth).is_err());
     }
 }

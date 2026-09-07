@@ -78,6 +78,7 @@ fn random_scope(rng: &mut Rng) -> DelegationScope {
         profile_version: random_layer(rng, &PROFILES),
         product_group: random_layer(rng, &GROUPS),
         window: random_window(rng),
+        conditions: Vec::new(),
     }
 }
 
@@ -182,6 +183,8 @@ fn request_matching_agrees_with_rejecting_layer() {
             profile_version: rng.pick(&PROFILES).to_string(),
             product_group: rng.pick(&GROUPS).to_string(),
             at: Timestamp::from_secs(rng.range(0, 20_000) as i64),
+            predicates: Default::default(),
+            attributes: Default::default(),
         };
         let matched = scope.matches(&req);
         let rejector = scope.rejecting_layer(&req);

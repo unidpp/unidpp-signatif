@@ -706,13 +706,15 @@ impl TrustGraph {
     ///
     /// Checks, per candidate path (deterministic order): every
     /// credential verifies against its parent node (single or threshold
-    /// quorum); scopes narrow monotonically; the effective scope admits
-    /// `request`; the start root is accepted by `bundle` at
+    /// quorum); scopes narrow monotonically (layers intersect,
+    /// conditions union); the effective scope admits `request` on all
+    /// four layers **and** every executable condition holds for the
+    /// request; the start root is accepted by `bundle` at
     /// `request.at`.
     ///
-    /// Errors distinguish the three failure classes (no path, scope
-    /// exclusion, credential signature) so callers can grade the
-    /// result.
+    /// Errors distinguish the failure classes (no path, scope
+    /// exclusion, scope condition, credential signature) so callers can
+    /// grade the result.
     pub fn resolve(
         &self,
         key_id: &KeyId,
@@ -728,7 +730,8 @@ impl TrustGraph {
         let mut best_failure: Option<SignatifError> = None;
         let note = |err: SignatifError, best: &mut Option<SignatifError>| {
             let rank = |e: &SignatifError| match e {
-                SignatifError::ScopeExcluded { .. } => 3,
+                SignatifError::ScopeExcluded { .. }
+                | SignatifError::ScopeConditionFailed { .. } => 3,
                 SignatifError::CredentialSignatureInvalid { .. } => 2,
                 SignatifError::ScopeViolation(_) => 1,
                 _ => 0,
@@ -776,6 +779,20 @@ impl TrustGraph {
                             detail: format!(
                                 "effective scope rejects the `{layer}` layer of the request"
                             ),
+                        },
+                        &mut best_failure,
+                    );
+                    continue;
+                }
+                // Hard check: the effective scope's executable
+                // conditions must hold for this request (CC/SIGNATIF
+                // §14 `tab-pipeline-checks` — evaluated at
+                // verification time, with the typed
+                // `scope_condition_failed` reason).
+                if let Some(condition) = effective.first_failed_condition(request) {
+                    note(
+                        SignatifError::ScopeConditionFailed {
+                            condition: condition.clone(),
                         },
                         &mut best_failure,
                     );
@@ -1136,5 +1153,82 @@ mod tests {
         let outside = ScopeRequest::new("eu", "p@1", "batteries", t(500));
         let err = g.resolve(fx.end_key.key_id(), &outside, &b).unwrap_err();
         assert!(matches!(err, SignatifError::ScopeExcluded { .. }));
+    }
+
+    #[test]
+    fn resolve_enforces_scope_conditions() {
+        use crate::scope::ScopeCondition;
+        let fx = fixture();
+        let mut g = fx.graph.clone();
+        // Re-issue mid->end with an executable attribute condition: the
+        // delegation only covers LFP batteries.
+        let scoped = DelegationScope::unconstrained()
+            .authority(["eu"])
+            .product_group(["batteries"])
+            .condition(ScopeCondition::Attribute {
+                key: "battery-chemistry".into(),
+                allowed_values: ["lfp"].into_iter().map(Into::into).collect(),
+            });
+        let cred = DelegationCredential::mint_sign(&fx.mid, &fx.end, scoped, &fx.mid_key).unwrap();
+        g.edges.clear();
+        g.add_edge(fx.graph.edges()[0].clone()).unwrap();
+        g.add_edge(cred).unwrap();
+        let b = bundle(&fx);
+
+        // Condition met (attribute recorded, allowed value): path resolves
+        // and the effective scope carries the condition.
+        let ok = ScopeRequest::new("eu", "p@1", "batteries", t(500))
+            .with_attribute("battery-chemistry", "lfp");
+        let path = g.resolve(fx.end_key.key_id(), &ok, &b).unwrap();
+        assert_eq!(path.effective_scope.conditions.len(), 1);
+
+        // Condition failed (wrong value): the typed failure reason.
+        let wrong = ScopeRequest::new("eu", "p@1", "batteries", t(500))
+            .with_attribute("battery-chemistry", "nmc");
+        match g.resolve(fx.end_key.key_id(), &wrong, &b).unwrap_err() {
+            SignatifError::ScopeConditionFailed { condition } => {
+                assert!(matches!(condition, ScopeCondition::Attribute { .. }));
+            }
+            other => panic!("expected ScopeConditionFailed, got {other:?}"),
+        }
+
+        // Condition unresolvable (attribute not carried): fails closed.
+        let bare = ScopeRequest::new("eu", "p@1", "batteries", t(500));
+        assert!(matches!(
+            g.resolve(fx.end_key.key_id(), &bare, &b).unwrap_err(),
+            SignatifError::ScopeConditionFailed { .. }
+        ));
+
+        // Predicate conditions consult the request's recorded outcomes.
+        let mut g2 = fx.graph.clone();
+        let scoped_pred = DelegationScope::unconstrained()
+            .authority(["eu"])
+            .product_group(["batteries"])
+            .condition(ScopeCondition::Predicate {
+                expression_ref: "urn:rule:audit".into(),
+            });
+        let cred2 =
+            DelegationCredential::mint_sign(&fx.mid, &fx.end, scoped_pred, &fx.mid_key).unwrap();
+        g2.edges.clear();
+        g2.add_edge(fx.graph.edges()[0].clone()).unwrap();
+        g2.add_edge(cred2).unwrap();
+        assert!(g2
+            .resolve(
+                fx.end_key.key_id(),
+                &ScopeRequest::new("eu", "p@1", "batteries", t(500))
+                    .with_predicate("urn:rule:audit", true),
+                &b
+            )
+            .is_ok());
+        assert!(matches!(
+            g2.resolve(
+                fx.end_key.key_id(),
+                &ScopeRequest::new("eu", "p@1", "batteries", t(500))
+                    .with_predicate("urn:rule:audit", false),
+                &b
+            )
+            .unwrap_err(),
+            SignatifError::ScopeConditionFailed { .. }
+        ));
     }
 }

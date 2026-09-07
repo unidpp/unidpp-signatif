@@ -1,4 +1,5 @@
-//! The four-layer delegation scope and its narrowing algebra.
+//! The four-layer delegation scope, its executable conditions, and the
+//! narrowing algebra.
 //!
 //! Every delegation edge in the trust graph carries a
 //! [`DelegationScope`] constraining *what the delegatee may do* along
@@ -12,14 +13,22 @@
 //!    delegatee scoped to `batteries` cannot attest textiles);
 //! 4. **time window** — when the delegation is effective.
 //!
+//! On top of the layers, a scope may carry executable
+//! [`ScopeCondition`]s (CC/SIGNATIF §3.6.4) — closed-form constraints
+//! (time windows, referenced predicates, attribute allow-lists)
+//! evaluated at **verification time** against the concrete
+//! [`ScopeRequest`], never at delegation time.
+//!
 //! Along any root-to-key path the scope may only **narrow monotonically**
 //! ([`DelegationScope::narrow`] refuses widening and empty
-//! intersections); the path's effective scope is the intersection. A
-//! concrete [`ScopeRequest`] (an act: authority, profile version,
-//! product group, moment) is admitted only if the effective scope
-//! matches it on all four layers.
+//! intersections); the path's effective scope is the intersection.
+//! Conditions narrow by superset (the child may add conditions; the
+//! effective set is the union). A concrete [`ScopeRequest`] (an act:
+//! authority, profile version, product group, moment, plus predicate
+//! outcomes and attributes) is admitted only if the effective scope
+//! matches it on all four layers *and* every condition holds.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use unidpp_model::{CanonicalWriter, Interval, Timestamp};
 
@@ -27,6 +36,152 @@ use crate::SignatifError;
 
 /// Canonical names of the four scope layers, in enforcement order.
 pub const SCOPE_LAYERS: [&str; 4] = ["authority", "profile-version", "product-group", "window"];
+
+/// One executable authorization-scope condition (CC/SIGNATIF §3.6.4,
+/// §11 `scope-conditions`): a constraint on a delegation that is
+/// *evaluated at verification time* against the concrete
+/// [`ScopeRequest`], not baked into the layer constraints.
+///
+/// The condition language is deliberately tiny and
+/// non-Turing-complete — three closed forms only:
+///
+/// - [`ScopeCondition::TimeWindow`] — the act must fall in
+///   `[from, until]` (`until = None` = no upper bound);
+/// - [`ScopeCondition::Predicate`] — an externally identified
+///   predicate (a reference into a profile's rule base) that must have
+///   evaluated `true` for the request; the verifier carries the
+///   predicate *outcome* in [`ScopeRequest::predicates`], never the
+///   expression itself, so the library never executes foreign code;
+/// - [`ScopeCondition::Attribute`] — a named attribute of the act
+///   (carried in [`ScopeRequest::attributes`]) must take one of the
+///   allowed values.
+///
+/// Conditions narrow by **superset** (CC/SIGNATIF §11
+/// `scope-monotonic-narrowing`): a child delegation may *add*
+/// conditions but never drop one of its parent's — the effective
+/// conditions along a path are the value-deduplicated union (see
+/// [`DelegationScope::narrow`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ScopeCondition {
+    /// The act must be dated inside `[from, until]`.
+    TimeWindow {
+        /// Window start (inclusive).
+        from: Timestamp,
+        /// Window end (inclusive; `None` = open-ended).
+        until: Option<Timestamp>,
+    },
+    /// An externally identified predicate that must hold for the act.
+    Predicate {
+        /// Reference to the predicate (e.g. a profile rule id); the
+        /// verifier supplies its evaluated outcome per request.
+        expression_ref: String,
+    },
+    /// A named attribute of the act must take an allowed value.
+    Attribute {
+        /// Attribute name (e.g. "battery-chemistry").
+        key: String,
+        /// The values the condition admits (empty = contradiction).
+        allowed_values: BTreeSet<String>,
+    },
+}
+
+impl ScopeCondition {
+    /// Stable condition label (for reports and error details).
+    pub fn label(&self) -> &'static str {
+        match self {
+            ScopeCondition::TimeWindow { .. } => "time-window",
+            ScopeCondition::Predicate { .. } => "predicate",
+            ScopeCondition::Attribute { .. } => "attribute",
+        }
+    }
+
+    /// Whether this condition is satisfied by the concrete request.
+    ///
+    /// Unresolvable inputs (a predicate with no recorded outcome, an
+    /// attribute the request does not carry) fail closed: a condition
+    /// the verifier cannot evaluate is a condition not met.
+    pub fn is_met_by(&self, request: &ScopeRequest) -> bool {
+        match self {
+            ScopeCondition::TimeWindow { from, until } => {
+                request.at >= *from && until.map_or(true, |u| request.at <= u)
+            }
+            ScopeCondition::Predicate { expression_ref } => {
+                request.predicates.get(expression_ref) == Some(&true)
+            }
+            ScopeCondition::Attribute {
+                key,
+                allowed_values,
+            } => request
+                .attributes
+                .get(key)
+                .is_some_and(|value| allowed_values.contains(value)),
+        }
+    }
+
+    /// Deterministic canonical bytes (length-prefixed fields; part of
+    /// the delegation credential's signed scope bytes).
+    pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut w = CanonicalWriter::new();
+        self.write(&mut w);
+        w.into_bytes()
+    }
+
+    fn write(&self, w: &mut CanonicalWriter) {
+        match self {
+            ScopeCondition::TimeWindow { from, until } => {
+                w.write_tag(0);
+                w.write_i64(from.secs);
+                w.write_u32(from.nanos);
+                w.write_bool(until.is_some());
+                if let Some(u) = until {
+                    w.write_i64(u.secs);
+                    w.write_u32(u.nanos);
+                }
+            }
+            ScopeCondition::Predicate { expression_ref } => {
+                w.write_tag(1);
+                w.write_str(expression_ref);
+            }
+            ScopeCondition::Attribute {
+                key,
+                allowed_values,
+            } => {
+                w.write_tag(2);
+                w.write_str(key);
+                w.write_u32(allowed_values.len() as u32);
+                for v in allowed_values {
+                    w.write_str(v);
+                }
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ScopeCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScopeCondition::TimeWindow { from, until } => match until {
+                Some(u) => write!(f, "time-window[{from}..={u}]"),
+                None => write!(f, "time-window[{from}..]"),
+            },
+            ScopeCondition::Predicate { expression_ref } => {
+                write!(f, "predicate`{expression_ref}`")
+            }
+            ScopeCondition::Attribute {
+                key,
+                allowed_values,
+            } => write!(
+                f,
+                "attribute`{key}` ∈ {{{}}}",
+                allowed_values
+                    .iter()
+                    .map(|v| v.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
 
 /// Constraint on one symbolic layer: `Any` (unconstrained) or
 /// `Only(values)` (admitted values).
@@ -171,7 +326,8 @@ impl WindowConstraint {
     }
 }
 
-/// The four-layer delegation scope.
+/// The four-layer delegation scope plus its executable conditions
+/// (CC/SIGNATIF §3.6.1 + §3.6.4).
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DelegationScope {
     /// Layer 1: admitting trust authorities (empty-wildcard semantics via
@@ -183,6 +339,10 @@ pub struct DelegationScope {
     pub product_group: LayerConstraint,
     /// Layer 4: admitting time window.
     pub window: WindowConstraint,
+    /// Executable conditions evaluated at verification time against the
+    /// concrete [`ScopeRequest`] (CC/SIGNATIF §3.6.4). Empty = the
+    /// layer constraints are the whole scope.
+    pub conditions: Vec<ScopeCondition>,
 }
 
 impl DelegationScope {
@@ -227,26 +387,44 @@ impl DelegationScope {
         self
     }
 
-    /// Whether any layer is a contradiction (an empty `Only` set).
+    /// Builder: append an executable scope condition (conditions
+    /// accumulate; see [`ScopeCondition`]).
+    pub fn condition(mut self, condition: ScopeCondition) -> DelegationScope {
+        self.conditions.push(condition);
+        self
+    }
+
+    /// Whether any layer is a contradiction (an empty `Only` set) or any
+    /// attribute condition admits nothing.
     pub fn is_contradiction(&self) -> bool {
         self.authority.is_contradiction()
             || self.profile_version.is_contradiction()
             || self.product_group.is_contradiction()
+            || self
+                .conditions
+                .iter()
+                .any(|c| matches!(c, ScopeCondition::Attribute { allowed_values, .. } if allowed_values.is_empty()))
     }
 
     /// Whether `child` is a monotonic narrowing of `self`: every layer of
-    /// `child` is entailed by the corresponding layer of `self`.
+    /// `child` is entailed by the corresponding layer of `self`, and the
+    /// child carries at least the parent's conditions (superset
+    /// narrowing — the child may add, never drop).
     pub fn admits(&self, child: &DelegationScope) -> bool {
         self.authority.entails(&child.authority)
             && self.profile_version.entails(&child.profile_version)
             && self.product_group.entails(&child.product_group)
             && self.window.entails(&child.window)
+            && self.conditions.iter().all(|c| child.conditions.contains(c))
     }
 
     /// The effective scope of a delegation chain `self -> child`:
-    /// per-layer intersection. Errors if the child *widens* any layer
-    /// (monotonic narrowing is enforced, never silently repaired) or if
-    /// an intersection is empty.
+    /// per-layer intersection plus **condition union** (superset
+    /// narrowing, CC/SIGNATIF §11: the child may add conditions; the
+    /// effective set along a path accumulates them all). Errors if the
+    /// child *widens* any layer or drops a parent condition (monotonic
+    /// narrowing is enforced, never silently repaired) or if an
+    /// intersection is empty.
     pub fn narrow(&self, child: &DelegationScope) -> Result<DelegationScope, SignatifError> {
         let details = [
             self.authority
@@ -262,17 +440,35 @@ impl DelegationScope {
                     self.window, child.window
                 )),
             },
+            self.conditions.iter().find_map(|c| {
+                if child.conditions.contains(c) {
+                    None
+                } else {
+                    Some(format!(
+                        "condition `{c}` granted by the parent was dropped by the child"
+                    ))
+                }
+            }),
         ];
         if let Some(detail) = details.into_iter().flatten().next() {
             return Err(SignatifError::ScopeViolation(format!(
                 "delegation must narrow monotonically: {detail}"
             )));
         }
+        // Effective conditions: the parent's conditions, then the
+        // child's additional ones, in order, deduplicated by value.
+        let mut conditions = self.conditions.clone();
+        for c in &child.conditions {
+            if !conditions.contains(c) {
+                conditions.push(c.clone());
+            }
+        }
         Ok(DelegationScope {
             authority: self.authority.intersect(&child.authority)?,
             profile_version: self.profile_version.intersect(&child.profile_version)?,
             product_group: self.product_group.intersect(&child.product_group)?,
             window: self.window.intersect(&child.window)?,
+            conditions,
         })
     }
 
@@ -285,15 +481,38 @@ impl DelegationScope {
             && self.window.contains(request.at)
     }
 
+    /// The first condition of this scope the request does not satisfy
+    /// (`None` when all conditions hold — vacuously when there are
+    /// none). Evaluation is closed and deterministic; unresolvable
+    /// inputs fail closed (see [`ScopeCondition::is_met_by`]).
+    pub fn first_failed_condition(&self, request: &ScopeRequest) -> Option<&ScopeCondition> {
+        self.conditions.iter().find(|c| !c.is_met_by(request))
+    }
+
+    /// Evaluate all conditions against the request; errors with the
+    /// first failed condition (`Ok(())` when the scope carries none).
+    pub fn check_conditions(&self, request: &ScopeRequest) -> Result<(), ScopeCondition> {
+        match self.first_failed_condition(request) {
+            Some(c) => Err(c.clone()),
+            None => Ok(()),
+        }
+    }
+
     /// Deterministic canonical bytes of the scope (length-prefixed
     /// fields via the core's [`CanonicalWriter`]): the bytes a
-    /// delegation credential's signature covers.
+    /// delegation credential's signature covers. Conditions are
+    /// written after the four layers, in order, deduplicated by value
+    /// (they already are, post-[`narrow`](DelegationScope::narrow)).
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut w = CanonicalWriter::new();
         write_layer(&mut w, &self.authority);
         write_layer(&mut w, &self.profile_version);
         write_layer(&mut w, &self.product_group);
         write_window(&mut w, &self.window);
+        w.write_u32(self.conditions.len() as u32);
+        for condition in &self.conditions {
+            condition.write(&mut w);
+        }
         w.into_bytes()
     }
 
@@ -346,8 +565,10 @@ fn write_window(w: &mut CanonicalWriter, window: &WindowConstraint) {
 }
 
 /// A concrete act to be checked against a scope: an authority attesting
-/// a profile-version lens for a product group at a moment.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// a profile-version lens for a product group at a moment, plus the
+/// inputs its executable conditions ([`ScopeCondition`]) evaluate
+/// against — the predicate outcomes and named attributes of the act.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ScopeRequest {
     /// Acting authority identifier.
     pub authority: String,
@@ -357,10 +578,20 @@ pub struct ScopeRequest {
     pub product_group: String,
     /// Moment of the act.
     pub at: Timestamp,
+    /// Predicate outcomes keyed by `expression_ref` (CC/SIGNATIF §11:
+    /// the verifier records what each referenced predicate evaluated
+    /// to; absent = failed closed).
+    #[serde(default)]
+    pub predicates: BTreeMap<String, bool>,
+    /// Named attributes of the act keyed by attribute name (inputs for
+    /// [`ScopeCondition::Attribute`]).
+    #[serde(default)]
+    pub attributes: BTreeMap<String, String>,
 }
 
 impl ScopeRequest {
-    /// Construct a request for the given act.
+    /// Construct a request for the given act (no predicates, no
+    /// attributes).
     pub fn new(
         authority: &str,
         profile_version: &str,
@@ -372,7 +603,21 @@ impl ScopeRequest {
             profile_version: profile_version.to_string(),
             product_group: product_group.to_string(),
             at,
+            predicates: BTreeMap::new(),
+            attributes: BTreeMap::new(),
         }
+    }
+
+    /// Builder: record a predicate outcome (keyed by `expression_ref`).
+    pub fn with_predicate(mut self, expression_ref: &str, outcome: bool) -> ScopeRequest {
+        self.predicates.insert(expression_ref.to_string(), outcome);
+        self
+    }
+
+    /// Builder: record a named attribute of the act.
+    pub fn with_attribute(mut self, key: &str, value: &str) -> ScopeRequest {
+        self.attributes.insert(key.to_string(), value.to_string());
+        self
     }
 }
 
@@ -451,5 +696,133 @@ mod tests {
         let too_late =
             ScopeRequest::new("eu", "urn:unidpp:profile:eu-batt@3", "batteries", t(5000));
         assert_eq!(scope.rejecting_layer(&too_late), Some("window"));
+    }
+
+    #[test]
+    fn conditions_narrow_by_superset_union() {
+        let chem = ScopeCondition::Attribute {
+            key: "battery-chemistry".into(),
+            allowed_values: ["lfp", "nmc"].into_iter().map(Into::into).collect(),
+        };
+        let parent = DelegationScope::unconstrained()
+            .authority(["eu"])
+            .product_group(["batteries"])
+            .condition(chem.clone());
+        // Child adds a predicate condition: a valid narrowing; the
+        // effective scope carries the union.
+        let child = parent.clone().condition(ScopeCondition::Predicate {
+            expression_ref: "urn:unidpp:rule:third-party-audit".into(),
+        });
+        assert!(parent.admits(&child));
+        let effective = parent.narrow(&child).unwrap();
+        assert_eq!(effective.conditions.len(), 2);
+        assert_eq!(effective.conditions[0], chem);
+        // Dropping the parent's condition is a widening: refused.
+        let dropped = DelegationScope::unconstrained()
+            .authority(["eu"])
+            .product_group(["batteries"]);
+        assert!(!parent.admits(&dropped));
+        let err = parent.narrow(&dropped).unwrap_err();
+        assert!(matches!(err, SignatifError::ScopeViolation(_)));
+        assert!(err.to_string().contains("dropped"), "{err}");
+        // Dedup: re-granting the same condition does not duplicate.
+        let again = parent.clone().condition(chem.clone());
+        assert_eq!(parent.narrow(&again).unwrap().conditions.len(), 1);
+    }
+
+    #[test]
+    fn condition_evaluation_across_the_three_forms() {
+        let scope = DelegationScope::unconstrained()
+            .authority(["eu"])
+            .condition(ScopeCondition::TimeWindow {
+                from: t(100),
+                until: Some(t(200)),
+            })
+            .condition(ScopeCondition::Predicate {
+                expression_ref: "rule:audit".into(),
+            })
+            .condition(ScopeCondition::Attribute {
+                key: "chemistry".into(),
+                allowed_values: ["lfp"].into_iter().map(Into::into).collect(),
+            });
+        let ok = ScopeRequest::new("eu", "p@1", "batteries", t(150))
+            .with_predicate("rule:audit", true)
+            .with_attribute("chemistry", "lfp");
+        assert_eq!(scope.first_failed_condition(&ok), None);
+        assert!(scope.check_conditions(&ok).is_ok());
+        // Time-window violation.
+        let late = ScopeRequest::new("eu", "p@1", "batteries", t(300));
+        assert!(matches!(
+            scope.first_failed_condition(&late),
+            Some(ScopeCondition::TimeWindow { .. })
+        ));
+        // Predicate false, absent, and false-recorded all fail closed.
+        for req in [
+            ScopeRequest::new("eu", "p@1", "batteries", t(150)),
+            ScopeRequest::new("eu", "p@1", "batteries", t(150)).with_predicate("rule:audit", false),
+        ] {
+            assert!(matches!(
+                scope.first_failed_condition(&req),
+                Some(ScopeCondition::Predicate { .. })
+            ));
+        }
+        // Attribute not carried / wrong value fails.
+        let wrong = ScopeRequest::new("eu", "p@1", "batteries", t(150))
+            .with_predicate("rule:audit", true)
+            .with_attribute("chemistry", "nmc");
+        assert!(matches!(
+            scope.first_failed_condition(&wrong),
+            Some(ScopeCondition::Attribute { .. })
+        ));
+        // Conditions are covered by the scope's canonical bytes.
+        let bare = DelegationScope::unconstrained().authority(["eu"]);
+        assert_ne!(
+            bare.canonical_bytes(),
+            bare.clone().condition(chem_condition()).canonical_bytes()
+        );
+        // An empty allowed_values set is a contradiction.
+        assert!(DelegationScope::unconstrained()
+            .condition(ScopeCondition::Attribute {
+                key: "k".into(),
+                allowed_values: BTreeSet::new(),
+            })
+            .is_contradiction());
+    }
+
+    fn chem_condition() -> ScopeCondition {
+        ScopeCondition::Attribute {
+            key: "chemistry".into(),
+            allowed_values: ["lfp"].into_iter().map(Into::into).collect(),
+        }
+    }
+
+    #[test]
+    fn condition_labels_and_display() {
+        let tw = ScopeCondition::TimeWindow {
+            from: t(1),
+            until: None,
+        };
+        assert_eq!(tw.label(), "time-window");
+        assert!(tw.to_string().contains("time-window"));
+        assert_eq!(
+            ScopeCondition::Predicate {
+                expression_ref: "r".into()
+            }
+            .label(),
+            "predicate"
+        );
+        assert_eq!(
+            ScopeCondition::Attribute {
+                key: "k".into(),
+                allowed_values: ["v"].into_iter().map(Into::into).collect(),
+            }
+            .label(),
+            "attribute"
+        );
+        // Canonical bytes are deterministic.
+        let c = ScopeCondition::Predicate {
+            expression_ref: "r".into(),
+        };
+        assert_eq!(c.canonical_bytes(), c.canonical_bytes());
     }
 }

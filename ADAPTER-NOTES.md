@@ -22,6 +22,16 @@ tests, and behavioural surface. It records three classes of result:
 
 No code was changed in producing this map.
 
+**Revision 2026-09-07 (implementation pass, branch `divergences`):**
+all six divergences of §20.2 were implemented. Four now **conform**
+(authorization scope conditions + `scope_condition_failed`, composite
+signatures, scope-condition withdrawal, deployment manifest); two are
+**adapter** (external time anchoring — payload + offline verification
+in-crate, submission/proof deployment-side; SLH-DSA — framed with an
+explicit `Unsupported` error behind a stubbed `slh-dsa` crate feature).
+Statuses below were updated in place with the new evidence; test count
+went 71 → 90 (`cargo test`), fmt/clippy `-D warnings` clean.
+
 ---
 
 ## 1. Terms, definitions and abbreviated terms (CC/SIGNATIF §3)
@@ -42,15 +52,15 @@ No code was changed in producing this map.
 | end certificate | unnumbered | `DelegationCredential` whose child is `NodeKind::End`; the end node's `RegisteredKey` is the authorized signing key | conforms |
 | trusted artifact | unnumbered | `verify::VerificationTarget { log, co_signature, anchor, profile, provided, active_links }` + the core's artifact event log | conforms |
 | canonical payload | unnumbered | the core's `unidpp_model::CanonicalWriter` (used throughout `scope.rs`, `graph.rs`, `sign.rs`, `anchor.rs`); co-signatures bind the same bytes (`sign::CoSignature::payload`); the deferred suites consume the same payload bytes | conforms |
-| authorization scope (scope) | §3.6.1 | `scope::DelegationScope { authority, profile_version, product_group, window }` | adapter — 4 layers vs standard's 6 (domain, subdomain, class, instance, identity, conditions). Documented substitution: the 4 layers in the crate map directly onto UniDPP's operating model (the UniDPP design framework, trust-registry section). `conditions` are not implemented as a separate dimension; see §1.2. `domain`/`subdomain` are folded into the `authority` layer; `class`/`instance`/`identity` are folded into `product_group`. This is a profile choice within the standard's "additional dimensions may be defined by profiles" allowance (§3.5). |
+| authorization scope (scope) | §3.6.1 | `scope::DelegationScope { authority, profile_version, product_group, window, conditions }` | adapter — 4 layers vs standard's 6 (domain, subdomain, class, instance, identity, conditions). Documented substitution: the 4 layers in the crate map directly onto UniDPP's operating model (the UniDPP design framework, trust-registry section). `conditions` **are** implemented as a separate dimension since the 2026-09-07 pass (`Vec<ScopeCondition>`, §3.6.4 below). `domain`/`subdomain` are folded into the `authority` layer; `class`/`instance`/`identity` are folded into `product_group`. This is a profile choice within the standard's "additional dimensions may be defined by profiles" allowance (§3.5). |
 | authorization scope dimension | §3.6.2 | `scope::LayerConstraint` (Any / Only(set)) + `WindowConstraint` (Anytime / Within(Interval)) | conforms |
-| authorization scope narrowing | §3.6.3 | `DelegationScope::narrow` + `narrow` chain in `graph::TrustGraph::resolve` (`graph.rs:740–755`) | conforms (with documented 4-layer substitution; see §1.2) |
-| authorization scope condition | §3.6.4 | **not implemented** | diverges — see §1.2 |
-| monotonic narrowing invariant | §3.6.5 | enforced strictly: `DelegationScope::narrow` returns `SignatifError::ScopeViolation` on widening (`scope.rs:250–277`); tested in `scope::tests::narrowing_algebra` (`scope.rs:387–412`), `tests/property_scope::narrowing_forms_a_lattice` (`property_scope.rs:122–144`), `tests/property_scope::widening_is_refused_or_intersects` (`property_scope.rs:146–173`), `tests/scenario_delegation::out_of_scope_*` (`scenario_delegation.rs:78–163`) | conforms |
+| authorization scope narrowing | §3.6.3 | `DelegationScope::narrow` + `narrow` chain in `graph::TrustGraph::resolve` (`graph.rs:753–766`; conditions narrow by union `scope.rs:428–476`) | conforms (with documented 4-layer substitution; see §1.2) |
+| authorization scope condition | §3.6.4 | `scope::ScopeCondition` (`TimeWindow{from,until}` / `Predicate{expression_ref}` / `Attribute{key,allowed_values}`) on `DelegationScope::conditions`; evaluation `ScopeCondition::is_met_by` / `DelegationScope::first_failed_condition` (`scope.rs:65–161, 488–496`); enforced in `graph::TrustGraph::resolve` (`graph.rs:784–797`) and the pipeline (`verify.rs:188–207`); typed failure `SignatifError::ScopeConditionFailed`; tests `scope::tests::{conditions_narrow_by_superset_union, condition_evaluation_across_the_three_forms, condition_labels_and_display}`, `graph::tests::resolve_enforces_scope_conditions`, `tests/scenario_conditions.rs` (3 tests) | conforms (closed-form, non-Turing-complete condition language: time windows, referenced predicates evaluated by outcome, attribute allow-lists; superset narrowing; fail-closed on unresolvable inputs) |
+| monotonic narrowing invariant | §3.6.5 | enforced strictly: `DelegationScope::narrow` returns `SignatifError::ScopeViolation` on widening (`scope.rs:428–476`); tested in `scope::tests::narrowing_algebra` and `scope::tests::conditions_narrow_by_superset_union` (`scope.rs`), `tests/property_scope::narrowing_forms_a_lattice` (`property_scope.rs:122–144`), `tests/property_scope::widening_is_refused_or_intersects` (`property_scope.rs:146–173`), `tests/scenario_delegation::out_of_scope_*` (`scenario_delegation.rs:78–163`) | conforms |
 | threshold signing | §3.7.1 | enforced at every level via `graph::verify_credential` (`graph.rs:623–654`); ceremony interface in `confium::CeremonyCoordinator` | conforms (interface-only for the threshold-cryptographic part; see §11) |
 | ceremony | §3.7.2 | `confium::{SessionInit, Commitment, Share, AggregatedSignature, SessionState}` + the `Pending → CommitmentsCollected → SharesCollected → Completed (+ Expired)` lifecycle | conforms (interface; mock binds plain Ed25519 signatures pending the Confium FFI/Rust binding — see §11) |
-| co-signature | §3.7.3 | `sign::CoSignature { domain, payload, slots: Vec<SignatureSlot> }` | conforms — multiple suites, same payload, independent verification (`sign::CoSignature::verify` `sign.rs:363–398`); cross-domain dimension-tagging is the caller's responsibility via `SigningDomain::ArtifactEvent` (data), `TreeHead` (transparency), `Quorum` (threshold), etc. — the standard allows the format profile to encode the tag; `unidpp-signatif` is format-agnostic and uses `SigningDomain` to convey intent. |
-| composite signature | §3.7.4 | **framing-only** — `Suite::EcdsaP256` and `Suite::Ed25519` are kept as separate slots; the crate's co-signature model is *collection*, not cryptographic AND-composition | adapter — documented deviation in `sign.rs:32–36` and `lib.rs:18–21`: "SM2 and ML-DSA remain framing-only — see [`sign::Suite`] for the documented deferral". Composite (single signature from AND of two algorithms) is not implemented; the multi-suite co-signature model substitutes. The standard permits "compositions of two post-quantum algorithms or other multi-algorithm combinations" (`§3.7.4`) but mandates composite as one of the recognized mechanisms. Gap remains; the migration case it serves is partly covered by the PQ-slot framing and the algorithm-agility registry (see §20). |
+| co-signature | §3.7.3 | `sign::CoSignature { domain, payload, slots: Vec<SignatureSlot>, composites: Vec<CompositeSignature> }` | conforms — multiple suites, same payload, independent verification (`sign::CoSignature::verify` `sign.rs:618–660`; composites = the §3.7.4 slot form); cross-domain dimension-tagging is the caller's responsibility via `SigningDomain::ArtifactEvent` (data), `TreeHead` (transparency), `Quorum` (threshold), etc. — the standard allows the format profile to encode the tag; `unidpp-signatif` is format-agnostic and uses `SigningDomain` to convey intent. |
+| composite signature | §3.7.4 | `sign::CompositeSignature { domain, payload, members }` — one logical signature from the AND-composition of member suites; `CompositeSignature::verify` (`sign.rs:426–503, 465–490`) requires EVERY member to verify (one failure fails the composite; framed-only/deferred/unknown members fail it); carried on `CoSignature::composites` as the alternative slot form alongside the plain multi-suite collection (`sign.rs:554`, `attach_composite`/`sign_composite_by` `sign.rs:584–611`); a verifying composite contributes all member suites to `CoSignatureReport::verified_suites`; tests `sign::tests::{composite_signatures_verify_under_and_composition, composite_slot_form_counts_toward_acceptance}`, `tests/scenario_cosign.rs::composite_slot_form_flows_through_the_pipeline` | conforms — cryptographic AND-composition per §3.7.4/§9 `algorithms-composite`; the hybrid classical/PQ migration form (member values live in one composite object over identical payload bytes; the pipeline gives each member a full `SlotTrust` row). SM2/ML-DSA member computation still awaits their bindings — a deferred member fails the composite rather than faking it. |
 | trust repudiation | §3.8.1 | `revoke::RevocationLedger::declare` + `Standing::VoidAbInitio` + `verify::SignatifVerdict::voids_ab_initio` | conforms |
 | trust dimension | §3.9.1 | `sign::SigningDomain::{ArtifactEvent=data, Quorum=authorization-via-threshold, HistoricalStamp=time-via-notary, TreeHead=transparency, Delegation=chain, MasterListWitness=federated}`; the dimension *attestation* is carried as a co-signature slot with the corresponding domain | adapter — the standard names seven dimensions (data, person, time, location, environment, authorization, identity, oracle). The crate implements data, time (via notary stamps), and authorization (via threshold/quorum) as first-class domains; person, location, environment, identity, oracle are caller-side concerns with no first-class domain. The cross-domain co-signature framework (multi-suite per dimension tag) is in place; the remaining dimensions are profile additions. |
 | dimension attestation | §3.9.2 | a `SignatureSlot` whose `domain` is the dimension's `SigningDomain` | conforms |
@@ -69,18 +79,32 @@ No code was changed in producing this map.
 | multi-log attestation | §3.11.4 | `LogOfLogs { m, k }` + `verify_master_quorum` | conforms |
 | passport | §3.12.1 | not implemented — UniDPP passports are encoded by `unidpp-core`'s Tier-A pack; the crate does not provide a presentation-format projection | diverges — see §1.3 |
 
-### 1.2 Scope-condition gap
+### 1.2 Scope-condition gap — RESOLVED (2026-09-07)
 
 The standard requires a `conditions` scope dimension holding executable
 predicates evaluated at verification time (CC/SIGNATIF §3.6.4, §11
-`scope-conditions`). The crate's 4-layer scope has no `conditions` dimension
-and `ScopeRequest` does not carry predicates. Evaluation of conditions is
-delegated to `unidpp-verdict` via the profile's `FreshnessRequirement` and
-the degradation ladder — but those are *separate* from scope-condition
-evaluation and do not satisfy the §11 norm. A conforming addition would be a
-`scope::Conditions` field on `DelegationScope` and a deterministic,
-non-Turing-complete predicate evaluator wired into `TrustGraph::resolve` and
-`SignatifVerifier::verify`. **diverges**.
+`scope-conditions`). **Implemented** in the 2026-09-07 pass:
+
+- `scope::ScopeCondition` (`scope.rs:65–161`) — three closed,
+  non-Turing-complete forms: `TimeWindow{from, until}`,
+  `Predicate{expression_ref}`, `Attribute{key, allowed_values}`;
+- `DelegationScope::conditions: Vec<ScopeCondition>` (`scope.rs:345`) —
+  part of the credential's signed canonical bytes; superset narrowing
+  in `DelegationScope::narrow` (`scope.rs:428–476`: the child may add
+  conditions, never drop a parent's; effective set = value-deduplicated
+  union; dropping is a `ScopeViolation`);
+- evaluation at verify time: `DelegationScope::first_failed_condition`
+  (`scope.rs:488`) with the closed-world rule (an absent predicate
+  outcome or attribute fails closed), wired into
+  `TrustGraph::resolve` (`graph.rs:784–797`) and
+  `SignatifVerifier::verify`/`accepted` (`verify.rs:91, 188–207, 140–150`)
+  via `SlotTrust::conditions`;
+- the typed failure reason `SignatifError::ScopeConditionFailed`
+  (`lib.rs`) — the standard's `scope_condition_failed` (§11.8).
+
+Tests: `scope.rs` (3), `graph.rs::resolve_enforces_scope_conditions`,
+`tests/scenario_conditions.rs` (3, end-to-end through the pipeline
+including acceptance blocking). **conforms.**
 
 ### 1.3 Passport (presentation-format projection)
 
@@ -121,7 +145,7 @@ implementing behaviour satisfies the binding requirements in clauses 6–19.
 | G — Graduated | Objective coverage report → classification | `verify::SignatifVerdict` + core `Verdict` + `outcome_token` | conforms |
 | N — Non-repudiable | Threshold quorum + transparency inclusion | `graph::ThresholdGroup` + `revoke::QuorumAttestation` (threshold of distinct member keys required) + `anchor::TransparencyLog` mandatory inclusion in `verify::SignatifVerifier::verify` via `with_anchor` | conforms |
 | A — Anchored | Delegation hierarchy + monotonic narrowing + root-anchor termination | `graph::TrustGraph` + `scope::DelegationScope::narrow` (monotonic narrowing hard check) + `graph::AnchorBundle::accepts_root` (root anchor termination) | conforms |
-| T — Trust | Lifecycle with threshold-gated revocation | `revoke::RevocationLedger` + `RevocationReason::is_retroactive` + `revoke::declare` requires `QuorumAttestation` for retroactive reasons (`revoke.rs:364–372`) | conforms |
+| T — Trust | Lifecycle with threshold-gated revocation | `revoke::RevocationLedger` + `RevocationReason::is_retroactive` + `revoke::declare` requires `QuorumAttestation` for retroactive reasons (`revoke.rs:387–395`) | conforms |
 | I — Infrastructure (level) | Shared anchors, logs, registries | `unidpp-registry` (not in audit) is the registry service; the crate contributes the trust-graph data model and the log-of-logs | conforms |
 | F — Framework | Requirements-conformant, profile-instantiated | The crate is a framework implementation: conformance profile registration is deferred to a registry call; the algorithm-agility registry is implemented as the `Suite` enum + `Suite::parse_token` (`sign.rs:78–85`); scope dimensions are extensible (`LayerConstraint::Only(BTreeSet<String>)` carries any string set) | conforms |
 
@@ -166,12 +190,12 @@ record it in the credential's `metadata`).
 
 - the authorized public key or fingerprint — `DelegationNode.keys: Vec<RegisteredKey>`
 - the authorization scope — `DelegationCredential::scope`
-- scope conditions, if any — see §1.2
+- scope conditions, if any — `DelegationScope::conditions` (`scope.rs:345`; §1.2) — carried in the certificate's signed bytes and evaluated at verify time
 - a reference to the issuing trust authority's delegation chain — implicit
  (the chain is the path the verifier walks; no embedded reference on the
  certificate in the standard's normative sense either)
 
-**Status:** conforms modulo scope conditions.
+**Status:** conforms.
 
 ### 4.4 Trust graph (CC/SIGNATIF §7 `architecture-graph`)
 
@@ -327,21 +351,38 @@ SM2 is recognized in the table but refused at verify time with
 
 ### 6.2 Post-quantum signature algorithms (CC/SIGNATIF §9 `algorithms-post-quantum`)
 
-ML-DSA-44/65/87 and SLH-DSA are framed (`Suite::MlDsa44/65/87`); computation
-is deferred. **adapter** — same deferral discipline as SM2. The standard
-notes FIPS 204 (ML-DSA) and FIPS 205 (SLH-DSA); SLH-DSA is not in the
-crate's table at all. **diverges** for SLH-DSA framing (the algorithm is in
-the standard's `tab-pqc-algorithms` table).
+ML-DSA-44/65/87 are framed (`Suite::MlDsa44/65/87`); computation
+is deferred. **SLH-DSA-128s and SLH-DSA-192s are framed** since the
+2026-09-07 pass (`Suite::SlhDsa128s/192s`, tokens `slh-dsa-128s` /
+`slh-dsa-192s`, FIPS 205 signature budgets 7856/16224, wire codes 7/8;
+`sign.rs:52–78`). Computation is **explicitly unsupported** rather than
+deferred: every path (keygen `keyring.rs:198–249`, slot verify
+`sign.rs:346–360`) returns `SignatifError::Unsupported` with the
+feature guidance — the `slh-dsa` crate feature is the stubbed
+integration seam (no PQ crate dependency yet, pending build-size and
+supply-chain review; `Suite::unsupported` `sign.rs:206–231`; no
+`unimplemented!`/panics anywhere). **adapter** — ML-DSA keeps the
+same deferral discipline as SM2; SLH-DSA is recognized in the table
+(the standard's `tab-pqc-algorithms` names ML-DSA and SLH-DSA) and
+refuses computation explicitly instead of silently faking it. Tests:
+`sign::tests::slh_dsa_suites_frame_refusing_computation`,
+`manifest::tests` (SLH-DSA as an active post-quantum manifest suite).
 
 ### 6.3 Composite signatures (CC/SIGNATIF §9 `algorithms-composite`)
 
-The crate does not implement a composite signature primitive. The standard
-defines a composite as a single signature produced by the AND-composition of
-two or more signature algorithms over the same canonical payload. The
-crate's multi-suite co-signature model *can* substitute at the protocol
-level (multiple slots, same payload, policy requires both), but a strict
-composite is a single cryptographic signature value. **diverges** — gap
-noted in `sign.rs:32–36`.
+**Implemented** (2026-09-07): `sign::CompositeSignature`
+(`sign.rs:426–503`) — the AND-composition of two or more member suites
+over the same domain-framed payload; `verify` requires ALL members
+valid, a single failure fails the composite. Wired as the alternative
+slot form (`CoSignature::composites`, `attach_composite` /
+`sign_composite_by`): a verifying composite contributes all member
+suites to `verified_suites`, so one composite satisfies the
+`min_verified_suites` policy (the hybrid migration case). The
+verification pipeline gives every composite member a full
+`SlotTrust` row (crypto/path/conditions, `verify.rs:263–281`).
+**conforms** — tests `sign::tests::composite_signatures_verify_under_and_composition`,
+`sign::tests::composite_slot_form_counts_toward_acceptance`,
+`tests/scenario_cosign.rs::composite_slot_form_flows_through_the_pipeline`.
 
 ### 6.4 Post-quantum migration path (CC/SIGNATIF §9 `algorithms-migration`)
 
@@ -404,25 +445,28 @@ feature; `tests/scenario_confium.rs:50–80` `lifecycle_follows_the_confium_sess
 The crate defines 4 layers (`scope::SCOPE_LAYERS = ["authority",
 "profile-version", "product-group", "window"]`) where the standard defines
 6 (`domain, subdomain, class, instance, identity, conditions`). The
-standard permits additional dimensions per profile. **adapter** — the 4
-layers are a UniDPP profile; the standard's `conditions` dimension is
-absent (see §1.2).
+standard permits additional dimensions per profile. The `conditions`
+dimension **is** implemented (`DelegationScope::conditions`, §1.2);
+the remaining mapping is the documented UniDPP profile substitution.
+**adapter** — the 4 layers are a UniDPP profile.
 
 ### 8.2 Monotonic narrowing invariant (`§11 scope-monotonic-narrowing`)
 
-Strictly enforced in `DelegationScope::narrow` (`scope.rs:250–277`). The
+Strictly enforced in `DelegationScope::narrow` (`scope.rs:428–476`). The
 algorithm is the same as the standard's: per-dimension entailment check,
 then intersection; widening returns `SignatifError::ScopeViolation`. Tested
-in `tests::scope::tests::narrowing_algebra` (`scope.rs:387–412`) and the
+in `tests::scope::tests::narrowing_algebra` (`scope.rs`) and the
 property tests `property_scope.rs`. **conforms.**
 
 The `conditions` dimension in the standard uses *superset* narrowing (the
-child may add conditions). The crate has no `conditions` dimension. **adapter**
-(structural gap; see §1.2).
+child may add conditions); the crate implements exactly that (`narrow`
+unions the conditions and refuses a child that drops a parent condition —
+`scope.rs:428–476`; tested in
+`scope::tests::conditions_narrow_by_superset_union`). **conforms.**
 
 ### 8.3 Authorization scope conditions (`§11 scope-conditions`)
 
-**diverges** — see §1.2.
+**conforms** — see §1.2.
 
 ### 8.4 Authorization scope encoding (`§11 scope-encoding`)
 
@@ -471,9 +515,19 @@ and merges the cascade. Tested in `tests::revoke::tests::taint_cascades_through_
 
 ### 9.4 Scope condition withdrawal (`§12 revocation-condition-withdrawal`)
 
-**diverges** — the standard's algorithm depends on scope conditions, which
-the crate does not implement (see §1.2). The withdrawal propagation
-cannot be performed because there are no conditions to query.
+**conforms** (2026-09-07) — `RevocationReason::ConditionWithdrawal`
+(prospective; no quorum required) + `RevokedSubject::Condition { node,
+condition }` (`revoke.rs:63–67, 131–144`) declare the withdrawal;
+`RevocationLedger::withdrawn_conditions_at(node, at)` (`revoke.rs:425`)
+queries it; the verification pipeline applies the overlay
+(`verify.rs::evaluate_conditions`, `verify.rs:194–205`): a condition
+still carried by a path's credential scope but withdrawn for its
+grantee node, in force at the verification moment, fails the verify-time
+condition check — the §12 withdrawal propagation, expressed through
+verify-time evaluation (conditions are never satisfied "on the record",
+so withdrawal cannot be laundered by pre-existing artifacts). Tested in
+`revoke::tests::condition_withdrawal_declares_and_propagates` and
+`tests/scenario_conditions.rs::withdrawn_condition_fails_from_the_effect_moment_only`.
 
 ### 9.5 Flag semantics (`§12 revocation-flag-semantics`)
 
@@ -545,13 +599,38 @@ head (passed separately). `verify_inclusion` recomputes the root
 
 ### 10.4 External time anchoring (`§13 transparency-anchoring`)
 
-The standard says each tree head shall be anchored to an external,
-irrefutable time source (OpenTimestamps-style). The crate does not perform
-external anchoring — it signs tree heads with the operator's key in
-`SigningDomain::TreeHead` but does not post the head hash to an external
-anchor (e.g. OpenTimestamps, a blockchain, RFC 3161 TSA). **diverges** —
-the standard treats external anchoring as a normative requirement; the
-crate leaves this to the operator's deployment.
+**adapter** (2026-09-07) — the crate now produces the anchoring
+commitment and verifies it offline; the submission and the completed
+proof remain deployment-side (the library never performs network
+calls, by design):
+
+- `anchor::ExternalAnchorMethod` (`Rfc3161 { tsa_url }` /
+  `OtsLite { rendezvous }`) and `anchor::ExternalAnchor`
+  (`anchor.rs:376–434`);
+- `anchor::external_anchor_payload(sth, method)` (`anchor.rs:437–468`) —
+  commits to `sha256(STH-canonical-bytes)`; OTS-lite framing is the
+  digest + rendezvous point, RFC 3161 framing is a minimal DER
+  `TimeStampReq` (version 1, SHA-256 messageImprint, nonce;
+  hand-rolled DER, no new dependency) ready for
+  `application/timestamp-query` submission;
+- `SignedTreeHead::anchored_externally` (`anchor.rs:338`) attaches the
+  anchor to the head (it commits *to* the signed bytes, so attaching
+  after the operator signature is sound); `verify_external_anchor`
+  (`anchor.rs:472`) and `SignedTreeHead::verify_external_anchor`
+  (`anchor.rs:348`) check the payload-to-head binding offline — any
+  post-hoc mutation of the head breaks it;
+- the documented submission flow (build → submit to
+  `submission_target` → store the returned RFC 3161 response / OTS
+  proof → verify the completed proof against the source's trust
+  anchors) is in the `ExternalAnchor` rustdoc.
+
+Tests: `anchor::tests::{external_anchor_commits_to_the_head,
+rfc3161_request_is_well_formed_der}`,
+`tests/scenario_transparency.rs::tree_head_anchored_externally_for_irrefutable_time`.
+The remaining gap to full §13 conformance — verifying the *completed*
+external proof — needs the time source's trust anchors and is a
+deployment/binding concern (same seam class as Confium and the PQ
+bindings).
 
 ### 10.5 Mirrors and gossip (`§13 transparency-mirrors`)
 
@@ -584,7 +663,7 @@ checks. Cross-walk:
 | Signature validity (hard) | §14 | `sign::CoSignature::verify` builds `CoSignatureReport`; `TrustReport::slots` enumerates per-slot `SlotTrust.crypto` | conforms |
 | Chain integrity (hard) | §14 | `graph::TrustGraph::resolve` finds a path; failure surfaces as `SignatifError::NoTrustPath` / `CredentialSignatureInvalid` / `ScopeExcluded` and is reflected in the verdict via the core's `cryptographic.chain_verified` | conforms |
 | Scope narrowing (hard) | §14 | `graph::resolve` calls `effective.narrow(&cred.scope)` per hop and refuses widening | conforms |
-| Scope conditions (hard) | §14 | **not implemented** (see §1.2) | diverges |
+| Scope conditions (hard) | §14 | `TrustGraph::resolve` checks `first_failed_condition` per candidate path (`graph.rs:784–797`); `SignatifVerifier::verify` records `SlotTrust::conditions` per slot and `SignatifVerdict::accepted` gates on it (`verify.rs:91, 140–150, 188–207`) | conforms |
 | Revocation status (hard) | §14 | `verify::SignatifVerifier::verify` consults the ledger per slot (`key_standing`); taint cascade is consulted via the core's `VerdictBuilder::with_taints` | conforms |
 | Transparency inclusion (soft) | §14 | `verify::SignatifVerifier` requires `target.anchor: Option<Hash>`; missing anchor degrades to `Outcome::Degraded(OfflineNoAnchor)` (tested in `tests/scenario_transparency::artifact_head_anchored_through_inclusion_and_sth`, `scenario_transparency.rs:96–120`) | conforms (soft-check downgrade semantics) |
 | Time anchor (soft) | §14 | the notary stamp is a separate artefact, not a co-signature on the canonical payload; the coverage report's `time_anchored` is delegated to the core | adapter — see §1.1 "time key" |
@@ -664,12 +743,12 @@ The typed failure reasons in the standard's `tab-failure-reasons` map as:
 | `signature_invalid` | `SlotTrust.crypto: Err(String)` |
 | `chain_broken` | `graph::TrustGraph::resolve` returns `NoTrustPath` / `CredentialSignatureInvalid` |
 | `scope_widened` | `DelegationScope::narrow` returns `SignatifError::ScopeViolation` |
-| `scope_condition_failed` | **not implemented** (see §1.2) |
+| `scope_condition_failed` | `SignatifError::ScopeConditionFailed { condition }` (`lib.rs`) — from `TrustGraph::resolve` (path-finding) and `SignatifVerifier::evaluate_conditions` (pipeline, `SlotTrust.conditions`) |
 | `revoked` | `SlotTrust.standing != Standing::Valid` |
 | `transparency_missing` | `verdict.outcome = Degraded(NoFreshnessEvidence | OfflineNoAnchor)` |
 
-**Status:** conforms for the implemented failure reasons; diverges on
-`scope_condition_failed`.
+**Status:** conforms for all the failure reasons the standard names
+(`scope_condition_failed` implemented since the 2026-09-07 pass).
 
 ### 11.9 Historical verification (`§14 verification-offline` + `verify_historical`)
 
@@ -726,13 +805,23 @@ interface conforms; the ceremony-record artefact awaits the binding.
 
 ## 15. Deployment manifest (CC/SIGNATIF §18)
 
-The standard specifies a deployment manifest declaring active algorithms
-and migration phase. The crate does not implement a manifest type —
-deployment metadata is the caller's responsibility (`unidpp-registry`
-hosts the operational state). **diverges** — there is no
-`DeploymentManifest` type. A conforming addition would be a
-`manifest::DeploymentManifest { active_algorithms, migration_phase,
-topology_profile, scope_extensions }` carried alongside `AnchorBundle`.
+**conforms** (2026-09-07) — `manifest::DeploymentManifest`
+(`manifest.rs:162`): `version`, `operator`, `active_algorithms`,
+`deprecated_algorithms`, `migration_phase`, `topology_profile`,
+`scope_extensions`, `effective_from`; serde-serializable (suites and
+phases serialize as their stable tokens). `validate`
+(`manifest.rs:218`) enforces: non-empty version/operator; ≥ 1 active
+algorithm; no suite both active and deprecated; hybrid phases require
+a mixed classical+PQ active set; the post-quantum phase excludes
+classical actives; scope-extension names non-empty and constraints
+non-contradictory. `algorithm_status` /
+`accepts_verification` give the §20 agility status (active /
+deprecated = retirement window / not listed). `MigrationPhase`
+(Classical → HybridCoSigned → HybridComposite → PostQuantum) and
+`TopologyProfile` (Hierarchical / Federated / CrossRecognized / Mesh,
+§19) are enumerated sum types with token (de)serialization. Tests:
+`manifest::tests` (4). Carried alongside `AnchorBundle` by the
+deployment.
 
 ---
 
@@ -770,7 +859,14 @@ scheduled.
 
 ### 17.3 Migration governance (`§20 algorithm-agility-migration`)
 
-Not implemented — see §15.
+Implemented as data since the 2026-09-07 pass: the deployment
+manifest's `MigrationPhase` (Classical / HybridCoSigned /
+HybridComposite / PostQuantum) + `deprecated_algorithms` encode the
+phases, with coherence validated in `DeploymentManifest::validate`
+(§15). The composite and multi-suite co-signature forms are the two
+hybrid mechanisms the phases name. **conforms** (the scheduling/
+announcement process itself is registry-side, as the standard's NOTE
+permits).
 
 ---
 
@@ -782,9 +878,13 @@ relevant primitives (domain separation in `SigningDomain`, monotonic
 narrowing hard check, threshold quorum enforcement, transparency log
 inclusion, retroactive-vs-prospective reason distinction,
 `is_framed_only` discipline on placeholder slots, framed-only suites
-reporting as `Deferred` rather than faking verification). **conforms** on
-the implemented primitives; gaps follow from the unimplemented clauses
-(conditions, composite signatures, ceremony re-share).
+reporting as `Deferred` rather than faking verification — and, since
+the 2026-09-07 pass, closed-world scope-condition evaluation (absent
+predicate outcomes and attributes fail closed), AND-composition
+composites that fail on any member, explicit `Unsupported` rather than
+silent gaps for SLH-DSA, and offline external-anchor verification).
+**conforms** on the implemented primitives; the remaining gap is the
+ceremony re-share (Confium binding).
 
 ---
 
@@ -795,13 +895,14 @@ The standard defines conformance classes. The crate implements:
 | Requirement class | Crate evidence |
 |---|---|
 | `architecture` (trust model, four-level, DAG) | `graph.rs` (TrustGraph, DelegationCredential, DelegationNode, NodeKind) |
-| `scope` (4 dimensions, monotonic narrowing, four-layer enforcement) | `scope.rs` (DelegationScope, LayerConstraint, WindowConstraint, ScopeRequest); 4-layer scope per UniDPP profile (see §1.1) |
-| `artifact-format` (canonical payload, format profiles, co-signatures) | `sign.rs` (CoSignature, SignatureSlot, SigningDomain); format-agnostic |
-| `algorithms` (classical + post-quantum, composite, agility) | `sign.rs::Suite`, deferred suites reported via `SuiteDeferred` |
+| `scope` (4 dimensions + conditions, monotonic narrowing, four-layer enforcement) | `scope.rs` (DelegationScope, LayerConstraint, WindowConstraint, ScopeCondition, ScopeRequest); 4-layer scope per UniDPP profile + the standard's conditions dimension (see §1.1, §1.2) |
+| `artifact-format` (canonical payload, format profiles, co-signatures) | `sign.rs` (CoSignature, SignatureSlot, SigningDomain, CompositeSignature as the composite slot form); format-agnostic |
 | `threshold-signing` (every level, quorum, federated, ceremony) | `graph.rs::ThresholdGroup`, `graph::verify_credential`; `confium.rs::CeremonyCoordinator` (interface-only) |
-| `revocation` (CRL, hash-binding, propagation, condition withdrawal, flag semantics, query, offline) | `revoke.rs` (RevocationLedger, RevocationReason, Standing, QuorumAttestation); condition withdrawal diverges (see §1.2) |
-| `transparency` (log structure, inclusion, consistency, anchoring, mirrors, gossip, multi-log) | `anchor.rs` (TransparencyLog, InclusionProof, ConsistencyProof, SignedTreeHead, LogOfLogs, verify_master_quorum); external time anchoring diverges (see §10.4) |
-| `verification` (pipeline, path-finding, coverage report, classification, acceptance, freshness, offline, results) | `verify.rs` (SignatifVerifier, VerificationTarget, TrustReport, SignatifVerdict, HistoricalVerification); failures conformant modulo scope-condition_failed (see §11.8) |
+| `revocation` (CRL, hash-binding, propagation, condition withdrawal, flag semantics, query, offline) | `revoke.rs` (RevocationLedger, RevocationReason, Standing, QuorumAttestation, RevokedSubject::Condition + withdrawn_conditions_at); condition withdrawal conforms (see §9.4) |
+| `transparency` (log structure, inclusion, consistency, anchoring, mirrors, gossip, multi-log) | `anchor.rs` (TransparencyLog, InclusionProof, ConsistencyProof, SignedTreeHead, LogOfLogs, verify_master_quorum, ExternalAnchor + external_anchor_payload + verify_external_anchor); external time anchoring adapter — payload + offline verification in-crate, submission/proof deployment-side (see §10.4) |
+| `verification` (pipeline, path-finding, coverage report, classification, acceptance, freshness, offline, results) | `verify.rs` (SignatifVerifier, VerificationTarget, TrustReport, SignatifVerdict, HistoricalVerification, SlotTrust.conditions); all failure reasons incl. scope_condition_failed conformant (see §11.8) |
+| `algorithms` (classical + post-quantum incl. SLH-DSA framing, composite, agility) | `sign.rs::Suite` (incl. SlhDsa128s/192s with explicit Unsupported), `CompositeSignature`; deferred suites reported via `SuiteDeferred` |
+| `deployment manifest` (§18: active algorithms, migration phase, topology profile, scope extensions) | `manifest.rs` (DeploymentManifest, MigrationPhase, TopologyProfile, AlgorithmStatus, validate) |
 
 The abstract test suite is the union of `tests/property_*.rs` (randomized
 property tests for Merkle proofs and scope narrowing) and
@@ -816,88 +917,153 @@ for the implemented subset.
 ### 20.1 Counts
 
 The clauses audited span 21 CC/SIGNATIF sections (§§1–21) + terms (§3) +
-abstract test suite (§6). Per-clause item rows:
+abstract test suite (§6). Original per-clause-item counts:
+conforms 38 / adapter 17 / diverges 6.
 
-| Class | Count |
-|---|---|
-| conforms | 38 |
-| adapter | 17 |
-| diverges | 6 |
+The 2026-09-07 implementation pass moved exactly the six audited
+divergence items:
 
-Top-level clause summary:
+| Class | Original | 2026-09-07 pass |
+|---|---|---|
+| conforms | 38 | 42 (+4: scope conditions, composite signatures, condition withdrawal, deployment manifest) |
+| adapter | 17 | 19 (+2: external time anchoring, SLH-DSA framing) |
+| diverges | 6 | 0 of the six audited items (the passport presentation-layer divergence, §1.3, remains by design — it lives in `unidpp-core`'s pack format, outside this crate's layer) |
+
+Top-level clause summary (post-pass; original in parentheses where
+changed):
 
 | Clause | Conforms | Adapter | Diverges |
 |---|---|---|---|
 | §1 Scope | 1 | 0 | 0 |
-| §3 Terms | 26 | 8 | 3 |
+| §3 Terms | 28 (26) | 7 (8) | 2 (3)¹ |
 | §5 Principles | 8 | 0 | 0 |
 | §7 Architecture | 4 | 3 | 0 |
 | §8 Artifact format | 5 | 2 | 0 |
-| §9 Algorithms | 1 | 3 | 1 |
+| §9 Algorithms | 2 (1) | 4 (3) | 0 (1) |
 | §10 Threshold signing | 2 | 2 | 0 |
-| §11 Trust chain & scope | 4 | 1 | 2 |
-| §12 Revocation | 5 | 1 | 1 |
-| §13 Transparency | 5 | 1 | 1 |
-| §14 Verification pipeline | 8 | 3 | 1 |
+| §11 Trust chain & scope | 5 (4) | 1 | 1 (2) |
+| §12 Revocation | 6 (5) | 1 | 0 (1) |
+| §13 Transparency | 5 | 2 (1) | 0 (1) |
+| §14 Verification pipeline | 9 (8) | 3 | 0 (1) |
 | §15 Key lifecycle | 0 | 1 | 0 |
 | §16 Delivery & discovery | 1 | 1 | 0 |
 | §17 Ceremony records | 0 | 1 | 0 |
-| §18 Deployment manifest | 0 | 0 | 1 |
+| §18 Deployment manifest | 1 (0) | 0 | 0 (1) |
 | §19 Governance | 0 | 1 | 0 |
-| §20 Algorithm agility | 0 | 3 | 0 |
+| §20 Algorithm agility | 1 (0) | 2 (3) | 0 |
 | §21 Security considerations | 1 | 0 | 0 |
 | §6 + ATS | 1 | 0 | 0 |
 
-### 20.2 Top divergences (precise file:line citations)
+¹ the passport row of §1.1 still reads *diverges* (§1.3: the
+presentation-format projection lives in `unidpp-core`'s Tier-A pack,
+deliberately outside this crate) — it was never one of the six
+actionable divergences of §20.2; the other remaining diverge is the
+§8.5 transparency-layer granularity note (chain-link scope logging).
 
-The most consequential divergences — those that would fail a SIGNATIF
-conformance test suite today — are:
+### 20.2 The six divergences — RESOLVED (2026-09-07 implementation pass)
 
-1. **Authorization scope conditions (CC/SIGNATIF §3.6.4, §11 `scope-conditions`).**
- No `conditions` dimension on `scope::DelegationScope`, no predicate
- evaluator, no `scope_condition_failed` failure reason. Affects every
- pipeline check that asserts "an artifact signed by a key whose scope
- conditions are not met fails verification". **Where to add:**
- `scope::DelegationScope { conditions: Vec<Condition> }`,
- `verify::SignatifVerifier::verify` to evaluate conditions against
- `target.co_signature.payload`. Citations:
- `src/scope.rs:175–186` (DelegationScope fields),
- `src/scope.rs:250–277` (DelegationScope::narrow — no conditions narrowing),
- `src/verify.rs:127–137` (`accepted()` does not check scope conditions).
+All six items below were implemented on branch `divergences`; the test
+count went 71 → 90, fmt and clippy `-D warnings` clean. What each
+divergence now does, with the new evidence:
 
-2. **Composite signatures (CC/SIGNATIF §3.7.4, §9 `algorithms-composite`).**
- No composite-signature primitive. The crate's multi-suite co-signature
- model substitutes but is *collection* not cryptographic AND-composition.
- **Where to add:** a `sign::CompositeSignature { scheme: CompositeScheme, ... }`
- carrying the AND of two signature values, with verification gated on
- both. Citation: `src/sign.rs:32–36` documents the deferral explicitly.
+1. **Authorization scope conditions (CC/SIGNATIF §3.6.4, §11 `scope-conditions`) — now conforms.**
+   `scope::ScopeCondition` (`TimeWindow{from,until}` /
+   `Predicate{expression_ref}` / `Attribute{key,allowed_values}`) on
+   `DelegationScope::conditions` (`src/scope.rs:65–161, 345`);
+   superset narrowing in `DelegationScope::narrow`
+   (`src/scope.rs:428–476`: the child may add conditions, never drop a
+   parent's); verify-time evaluation in `TrustGraph::resolve`
+   (`src/graph.rs:784–797`) and the pipeline
+   (`src/verify.rs:188–207` via `SlotTrust::conditions`, gating
+   `accepted` at `src/verify.rs:140–150`); typed failure
+   `SignatifError::ScopeConditionFailed{condition}` (`src/lib.rs`) —
+   the standard's `scope_condition_failed`. Tests: `scope.rs` ×3,
+   `graph.rs::resolve_enforces_scope_conditions`,
+   `tests/scenario_conditions.rs` ×3.
 
-3. **External time anchoring of transparency tree heads (CC/SIGNATIF §13 `transparency-anchoring`).**
- `SignedTreeHead` is signed by the operator's key in
- `SigningDomain::TreeHead` but is not anchored to an external, irrefutable
- time source (OpenTimestamps, RFC 3161 TSA, blockchain anchor). The
- standard treats this as a normative requirement on the log operator.
- **Where to add:** an `anchor::ExternalAnchor` type carrying the
- OpenTimestamps-style proof; `SignedTreeHead { external_anchor: Option<...> }`.
- Citations: `src/anchor.rs:266–278` (SignedTreeHead), `src/anchor.rs:238–260`
- (`sign_tree_head`).
+2. **Composite signatures (CC/SIGNATIF §3.7.4, §9 `algorithms-composite`) — now conforms.**
+   `sign::CompositeSignature` (`src/sign.rs:426–503`): cryptographic
+   AND-composition — every member suite must verify; a single failing
+   member fails the composite (deferred/framed-only/unknown members
+   fail it too). Wired as the alternative slot form
+   `CoSignature::composites` (`src/sign.rs:554`;
+   `attach_composite`/`sign_composite_by` at `src/sign.rs:584–611`)
+   alongside the multi-suite collection; a verifying composite
+   contributes all member suites to `verified_suites`, so one
+   composite satisfies `min_verified_suites = 2` (the hybrid
+   classical/PQ migration case); the pipeline emits a `SlotTrust` row
+   per member (`src/verify.rs:263–281`). Tests: `sign.rs` ×2,
+   `tests/scenario_cosign.rs::composite_slot_form_flows_through_the_pipeline`.
 
-4. **SLH-DSA framing (CC/SIGNATIF §9 `algorithms-post-quantum`).**
- The crate's `Suite` enum has Ed25519, ECDSA-P256, SM2, ML-DSA-44/65/87
- but no SLH-DSA (`sign.rs:37–51`). The standard's `tab-pqc-algorithms`
- names ML-DSA and SLH-DSA. **Where to add:** `Suite::SlhDsa` (with
- parameter-set variants). Citation: `src/sign.rs:56–63` (`Suite::ALL`).
+3. **External time anchoring of transparency tree heads (CC/SIGNATIF §13 `transparency-anchoring`) — now adapter.**
+   `anchor::external_anchor_payload(sth, method)` + `ExternalAnchor` +
+   `ExternalAnchorMethod{Rfc3161, OtsLite}` (`src/anchor.rs:376–468`):
+   the commitment is sha256 of the STH's canonical bytes, framed
+   either as an OTS-lite digest+rendezvous-point or as a minimal DER
+   RFC 3161 `TimeStampReq` (version 1, SHA-256 messageImprint, nonce;
+   hand-rolled DER — no new dependency), ready for
+   `application/timestamp-query` submission. `SignedTreeHead::anchored_externally`
+   (`src/anchor.rs:338`) attaches it to the head; `verify_external_anchor`
+   (`src/anchor.rs:472`) and `SignedTreeHead::verify_external_anchor`
+   (`src/anchor.rs:348`) verify the payload-to-head binding offline —
+   any post-hoc mutation of the head breaks it. **No network calls in
+   the library**: the submission flow (and verification of the
+   completed proof against the time source's trust anchors) is
+   documented deployment-side on `ExternalAnchor`. Tests: `anchor.rs`
+   ×2, `tests/scenario_transparency.rs::tree_head_anchored_externally_for_irrefutable_time`.
 
-5. **Scope condition withdrawal (CC/SIGNATIF §12 `revocation-condition-withdrawal`).**
- Depends on item 1; cannot be implemented until scope conditions exist.
- Citations: `src/revoke.rs:81–106` (revocation condition withdrawal is
- absent from the module; the §12 algorithm is unencoded).
+4. **SLH-DSA framing (CC/SIGNATIF §9 `algorithms-post-quantum`) — now adapter.**
+   `Suite::SlhDsa128s` / `Suite::SlhDsa192s` (`src/sign.rs:52–78`):
+   tokens `slh-dsa-128s`/`slh-dsa-192s`, FIPS 205 signature budgets
+   7856/16224 bytes, wire codes 7/8, no core carrier mapping.
+   Computation is refused with the explicit
+   `SignatifError::Unsupported` (distinct from `SuiteDeferred`) from
+   `KeyPair::seeded` (`src/keyring.rs:198–249`) and
+   `SignatureSlot::verify` (`src/sign.rs:346–360`), gated on the
+   **stubbed** `slh-dsa` crate feature (`Cargo.toml`): the PQ binding
+   crate is deliberately not a dependency yet (build-size and
+   supply-chain review pending; rationale in `Suite::unsupported`,
+   `src/sign.rs:206–231`). No `unimplemented!` anywhere — every path
+   returns an explicit error. Tests:
+   `sign.rs::slh_dsa_suites_frame_refusing_computation`; SLH-DSA also
+   appears as an active manifest suite in `manifest.rs` tests.
 
-6. **Deployment manifest (CC/SIGNATIF §18).**
- No `DeploymentManifest` type. The active algorithms, migration phase,
- topology profile, and scope extensions are deployment-side data with no
- normative shape. **Where to add:** `manifest::DeploymentManifest` or a
- `meta` submodule of the crate.
+5. **Scope condition withdrawal (CC/SIGNATIF §12 `revocation-condition-withdrawal`) — now conforms.**
+   `RevocationReason::ConditionWithdrawal` (prospective — no quorum
+   required; earlier verifications stand) + `RevokedSubject::Condition{node,
+   condition}` (`src/revoke.rs:63–67, 131–144`) declare the withdrawal;
+   `RevocationLedger::withdrawn_conditions_at(node, at)`
+   (`src/revoke.rs:425`) queries it; the pipeline's condition
+   evaluation applies the overlay (`src/verify.rs:194–205`): a
+   condition still carried by a path's credential scope but withdrawn
+   for its grantee node, in force at the verification moment, fails
+   the check — the §12 withdrawal propagation expressed through
+   verify-time evaluation, so withdrawal cannot be laundered by
+   pre-existing artifacts. Tests:
+   `revoke.rs::condition_withdrawal_declares_and_propagates`,
+   `tests/scenario_conditions.rs::withdrawn_condition_fails_from_the_effect_moment_only`.
+
+6. **Deployment manifest (CC/SIGNATIF §18) — now conforms.**
+   `manifest::DeploymentManifest` (`src/manifest.rs:162`):
+   `version`, `operator`, `active_algorithms`,
+   `deprecated_algorithms`, `migration_phase` (Classical /
+   HybridCoSigned / HybridComposite / PostQuantum), `topology_profile`
+   (Hierarchical / Federated / CrossRecognized / Mesh — the §19 four),
+   `scope_extensions`, `effective_from`; serde-serializable with
+   stable kebab-case tokens. `validate()` (`src/manifest.rs:218`)
+   enforces the §18/§20 coherence rules: non-empty version/operator,
+   ≥ 1 active algorithm, no suite both active and deprecated, hybrid
+   phases require a mixed classical+PQ active set, the post-quantum
+   phase excludes classical actives, and scope-extension constraints
+   are non-contradictory. `algorithm_status` /
+   `accepts_verification` expose the agility status (active /
+   deprecated-retirement-window / not listed). Tests: `manifest.rs` ×4.
+
+The remaining documented gaps after this pass: the passport
+presentation layer (§1.3 — lives in `unidpp-core`'s Tier-A pack), the
+chain-link transparency + per-hop revocation granularity (§4.5), and
+the cryptographic bindings (Confium re-share; SM2, ML-DSA, SLH-DSA
+computation) — all interface-only by documented design choice.
 
 ### 20.3 Top adapters (semantic equivalences, no conformance gap)
 
@@ -907,10 +1073,9 @@ standard's prescribed shape by deliberate, documented design. The most consequen
 - **4-layer scope instead of 6-layer.** The standard's six dimensions
  (domain, subdomain, class, instance, identity, conditions) are mapped
  onto UniDPP's operating model (authority, profile-version,
- product-group, window). This is a profile choice the standard
- permits ("additional dimensions may be defined by profiles"). The
- `conditions` dimension is the only one that loses real semantics (see
- divergence #1).
+ product-group, window) — with `conditions` now implemented as its own
+ dimension (§1.2). This is a profile choice the standard
+ permits ("additional dimensions may be defined by profiles").
 
 - **Trust graph path-finding without chain-link transparency or per-hop
  revocation.** The crate does the cryptographic and scope-narrowing
@@ -944,43 +1109,61 @@ standard's prescribed shape by deliberate, documented design. The most consequen
 
 ## 21. File:line citations (selected, for quick navigation)
 
+Line numbers refreshed after the 2026-09-07 implementation pass; new
+symbols of the pass are marked ★.
+
 | Crate symbol | Path | Lines | Standard clause |
 |---|---|---|---|
-| `Suite::ALL` | src/sign.rs | 56–63 | §3.7.1, §9 |
-| `Suite::deferral` | src/sign.rs | 134–146 | §9 (SM2, ML-DSA) |
-| `SigningDomain` | src/sign.rs | 178–206 | §3.9, §10 |
-| `domain_framed` | src/sign.rs | 209–216 | §3.7.1 (domain separation) |
-| `CoSignature::verify` | src/sign.rs | 363–398 | §8 `artifact-cosignatures` |
-| `AcceptancePolicy` | src/sign.rs | 475–542 | §14 `verification-acceptance` |
-| `DelegationScope` | src/scope.rs | 175–186 | §3.6.1, §11 |
-| `SCOPE_LAYERS` | src/scope.rs | 29 | §11 (4 vs 6 layers) |
-| `DelegationScope::narrow` | src/scope.rs | 250–277 | §3.6.5, §11 |
-| `DelegationCredential` | src/graph.rs | 152–208 | §7 `architecture-authorities` |
-| `NodeKind::ThresholdGroup` | src/graph.rs | 67–83 | §10 `threshold-every-level` |
-| `TrustGraph::resolve` | src/graph.rs | 703–782 | §7 `architecture-pathfinding`, §14 |
-| `TrustGraph::verify_credential` | src/graph.rs | 623–654 | §10 threshold enforcement |
-| `AnchorBundle::accepts_root` | src/graph.rs | 437–453 | §3.10, §7 `architecture-anchors` |
-| `RevocationReason::is_retroactive` | src/revoke.rs | 78–86 | §12, §5 principle T |
-| `RevocationLedger::declare` | src/revoke.rs | 364–372 | §3.8, §12 |
-| `QuorumAttestation::is_quorate` | src/revoke.rs | 188–203 | §3.7, §10 |
-| `RevocationLedger::taints_of` | src/revoke.rs | 448–521 | §12 `revocation-propagation` |
-| `leaf_hash` / `node_hash` | src/anchor.rs | 37–44 | §13 (domain separation) |
-| `TransparencyLog::sign_tree_head` | src/anchor.rs | 238–260 | §13, §10.4 divergence |
-| `SignedTreeHead::lol_commitment` | src/anchor.rs | 311–319 | §13 |
-| `verify_inclusion` | src/anchor.rs | 324–349 | §13 `transparency-inclusion-proof` |
-| `verify_consistency` | src/anchor.rs | 359–412 | §13 `transparency-consistency-proof` |
-| `LogOfLogs` | src/anchor.rs | 507–563 | §13 `transparency-multi-log` |
-| `verify_master_quorum` | src/anchor.rs | 566–582 | §13 |
-| `SignatifVerifier::verify` | src/verify.rs | 167–247 | §14 `verification-pipeline` |
-| `SignatifVerifier::verify_historical` | src/verify.rs | 259–299 | §14 `verification-offline` |
-| `SignatifVerdict::accepted` | src/verify.rs | 127–137 | §14 `verification-acceptance` |
-| `HistoricalVerification::still_stands` | src/verify.rs | 348–375 | §14, §5 principle T |
+| `Suite::ALL` | src/sign.rs | 76–88 | §3.7.1, §9 |
+| `Suite::deferral` | src/sign.rs | 179–204 | §9 (SM2, ML-DSA) |
+| ★ `Suite::unsupported` | src/sign.rs | 206–231 | §9 (SLH-DSA, `slh-dsa` feature stub) |
+| ★ `Suite::is_post_quantum` | src/sign.rs | 145–154 | §18/§20 (migration-phase input) |
+| `SigningDomain` | src/sign.rs | 258–284 | §3.9, §10 |
+| `domain_framed` | src/sign.rs | 289–295 | §3.7.1 (domain separation) |
+| ★ `CompositeSignature` (+`verify`) | src/sign.rs | 426–503 | §3.7.4, §9 `algorithms-composite` |
+| `CoSignature::verify` (composites wired) | src/sign.rs | 618–660 | §8 `artifact-cosignatures`, §3.7.4 |
+| `AcceptancePolicy` | src/sign.rs | 761– | §14 `verification-acceptance` |
+| `DelegationScope` (+`conditions`) | src/scope.rs | 332–346 | §3.6.1, §3.6.4, §11 |
+| ★ `ScopeCondition` | src/scope.rs | 65–161 | §3.6.4, §11 `scope-conditions` |
+| `SCOPE_LAYERS` | src/scope.rs | 38 | §11 (4 vs 6 layers) |
+| `DelegationScope::narrow` (condition union) | src/scope.rs | 428–476 | §3.6.5, §11 `scope-monotonic-narrowing` |
+| ★ `DelegationScope::first_failed_condition` | src/scope.rs | 488–496 | §11, §14 |
+| `DelegationCredential` | src/graph.rs | 153– | §7 `architecture-authorities` |
+| `NodeKind::ThresholdGroup` | src/graph.rs | 67–84 | §10 `threshold-every-level` |
+| `TrustGraph::resolve` (condition check) | src/graph.rs | 718–810 | §7 `architecture-pathfinding`, §14 |
+| `TrustGraph::verify_credential` | src/graph.rs | 636– | §10 threshold enforcement |
+| `AnchorBundle::accepts_root` | src/graph.rs | 439– | §3.10, §7 `architecture-anchors` |
+| `RevocationReason::is_retroactive` | src/revoke.rs | 84–92 | §12, §5 principle T |
+| ★ `RevocationReason::ConditionWithdrawal` | src/revoke.rs | 63–67 | §12 `revocation-condition-withdrawal` |
+| ★ `RevokedSubject::Condition` | src/revoke.rs | 131–144 | §12 |
+| ★ `RevocationLedger::withdrawn_conditions_at` | src/revoke.rs | 425–448 | §12 |
+| `RevocationLedger::declare` | src/revoke.rs | 387– | §3.8, §12 |
+| `QuorumAttestation::is_quorate` | src/revoke.rs | 211– | §3.7, §10 |
+| `RevocationLedger::taints_of` | src/revoke.rs | 497– | §12 `revocation-propagation` |
+| `leaf_hash` / `node_hash` | src/anchor.rs | 38–45 | §13 (domain separation) |
+| `TransparencyLog::sign_tree_head` | src/anchor.rs | 240– | §13 |
+| ★ `SignedTreeHead::anchored_externally` / `verify_external_anchor` | src/anchor.rs | 338–360 | §13 `transparency-anchoring` |
+| ★ `ExternalAnchorMethod` / `ExternalAnchor` | src/anchor.rs | 376–434 | §13 `transparency-anchoring` |
+| ★ `external_anchor_payload` / `verify_external_anchor` | src/anchor.rs | 437–490 | §13 (OTS-lite + RFC 3161 DER) |
+| `SignedTreeHead::lol_commitment` | src/anchor.rs | 322– | §13 |
+| `verify_inclusion` | src/anchor.rs | 549– | §13 `transparency-inclusion-proof` |
+| `verify_consistency` | src/anchor.rs | 584– | §13 `transparency-consistency-proof` |
+| `LogOfLogs` | src/anchor.rs | 738– | §13 `transparency-multi-log` |
+| `verify_master_quorum` | src/anchor.rs | 795– | §13 |
+| `SignatifVerifier::verify` (conditions + composite members) | src/verify.rs | 247– | §14 `verification-pipeline` |
+| ★ `SignatifVerifier::evaluate_conditions` / `slot_trust` | src/verify.rs | 175–245 | §11, §12, §14 |
+| `SignatifVerifier::verify_historical` | src/verify.rs | 357– | §14 `verification-offline` |
+| `SignatifVerdict::accepted` (conditions gate) | src/verify.rs | 140–150 | §14 `verification-acceptance` |
+| ★ `SlotTrust::conditions` | src/verify.rs | 85–91 | §14 (hard scope-condition check) |
+| `HistoricalVerification::still_stands` | src/verify.rs | 446– | §14, §5 principle T |
+| ★ `DeploymentManifest` / `validate` | src/manifest.rs | 162– / 218– | §18, §19, §20 |
 | `CeremonyCoordinator` | src/confium.rs | 279–304 | §10 `threshold-ceremony` |
-| `MockCeremony` | src/confium.rs | 314–501 | §10, §17 |
+| `MockCeremony` | src/confium.rs | 328– | §10, §17 |
 
 ---
 
 *End of ADAPTER-NOTES.md — 2026-09-07. Audit produced by reading the
 standard AsciiDoc at `the SIGNATIF standard sources (CalConnect)`
-and the crate at `this crate/`. No code
-changed.*
+and the crate at `this crate/`. Revised 2026-09-07 (branch
+`divergences`) after implementing the six divergences of §20.2 —
+statuses updated in place; see the revision note at the top.*

@@ -195,6 +195,12 @@ impl KeyPair {
     /// (`H(seed)` becomes the Ed25519 seed / the P-256 scalar). Intended
     /// for tests and ceremony fixtures; production keys come from a
     /// CSPRNG-backed store.
+    ///
+    /// Suites without computation here refuse: deferred suites (SM2,
+    /// ML-DSA) with [`SignatifError::SuiteDeferred`], explicitly
+    /// unsupported suites (SLH-DSA — the `slh-dsa` feature is a stub
+    /// with no PQ crate dependency yet) with
+    /// [`SignatifError::Unsupported`]. Neither ever panics.
     pub fn seeded(suite: Suite, seed: &[u8]) -> Result<KeyPair, SignatifError> {
         let scalar = sha256(&[b"UNIDPP-SIGNATIF/KEY-SEED", seed]).0;
         match suite {
@@ -220,9 +226,18 @@ impl KeyPair {
                     public,
                 })
             }
-            deferred => Err(SignatifError::SuiteDeferred {
-                suite: deferred.to_string(),
-                detail: deferred.deferral().unwrap().to_string(),
+            other => Err(match other.unsupported() {
+                Some(detail) => SignatifError::Unsupported {
+                    suite: other.to_string(),
+                    detail: detail.to_string(),
+                },
+                None => SignatifError::SuiteDeferred {
+                    suite: other.to_string(),
+                    detail: other
+                        .deferral()
+                        .expect("non-computed suites are deferred or unsupported")
+                        .to_string(),
+                },
             }),
         }
     }
