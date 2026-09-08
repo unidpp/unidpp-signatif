@@ -249,6 +249,21 @@ impl fmt::Display for PublicKey {
     }
 }
 
+impl PublicKey {
+    /// The suite-certain serialization: `suite:public-hex` — the exact
+    /// grammar `unidpp verify --anchor` parses, and the form a 65-byte
+    /// SEC1 point NEEDS (SM2 and P-256 are indistinguishable by
+    /// length alone). Unlike [`fmt::Display`], this round-trips
+    /// through `suite:hex` parsing back to this key.
+    pub fn to_serialized(&self) -> String {
+        let mut hex = String::with_capacity(self.as_bytes().len() * 2);
+        for byte in self.as_bytes() {
+            hex.push_str(&format!("{byte:02x}"));
+        }
+        format!("{}:{}", self.suite().as_str(), hex)
+    }
+}
+
 /// A key identifier: content-derived, pins exactly one public key and
 /// suite (`k-` + first 16 hex chars of `H(suite-code || public-key)`).
 #[derive(
@@ -536,6 +551,31 @@ impl fmt::Debug for KeyPair {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn to_serialized_round_trips_through_suite_hex_parsing() {
+        let pairs = [
+            KeyPair::seeded(Suite::Ed25519, b"round-trip-ed").expect("ed25519 seed"),
+            KeyPair::seeded(Suite::EcdsaP256, b"round-trip-p256").expect("p256 seed"),
+        ];
+        for key in pairs.iter().map(|kp| kp.public()) {
+            let serialized = key.to_serialized();
+            let (suite_token, hex) = serialized.split_once(':').expect("suite:hex grammar");
+            let suite = Suite::parse_token(suite_token).expect("the suite token parses");
+            let bytes = hex_decode(hex).expect("hex");
+            let back = PublicKey::from_bytes_in(suite, &bytes).expect("the key parses back");
+            assert_eq!(
+                KeyId::of(&back).as_str(),
+                KeyId::of(key).as_str(),
+                "{serialized}"
+            );
+            // Display stays the FINGERPRINT grammar (sha256), distinct
+            // from the serialization.
+            assert_ne!(key.to_string(), serialized);
+        }
+    }
+
     use super::*;
 
     #[test]
