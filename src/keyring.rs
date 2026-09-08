@@ -576,8 +576,6 @@ mod tests {
         }
     }
 
-    use super::*;
-
     #[test]
     fn seeded_keys_are_deterministic_and_distinct() {
         let a = KeyPair::seeded(Suite::Ed25519, b"root-seed").unwrap();
