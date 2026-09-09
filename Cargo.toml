@@ -40,6 +40,7 @@ unidpp-model = { path = "../unidpp-core/crates/model" }
 unidpp-transform = { path = "../unidpp-core/crates/transform" }
 unidpp-event = { path = "../unidpp-core/crates/event" }
 unidpp-verdict = { path = "../unidpp-core/crates/verdict" }
+unidpp-grid = { path = "../unidpp-core/crates/grid" }
 serde = { version = "1", features = ["derive"] }
 ed25519-dalek = "2"
 curve25519-dalek = "4"

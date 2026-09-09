@@ -820,6 +820,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "unidpp-grid"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "unidpp-model",
+]
+
+[[package]]
 name = "unidpp-model"
 version = "0.1.0"
 dependencies = [
@@ -843,6 +851,7 @@ dependencies = [
  "sha2",
  "sm2",
  "unidpp-event",
+ "unidpp-grid",
  "unidpp-model",
  "unidpp-transform",
  "unidpp-verdict",

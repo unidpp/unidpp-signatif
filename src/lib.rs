@@ -63,6 +63,7 @@
 pub mod anchor;
 pub mod envelope;
 pub mod graph;
+pub mod grid;
 pub mod keyring;
 pub mod manifest;
 pub mod revoke;

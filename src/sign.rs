@@ -294,6 +294,12 @@ pub enum SigningDomain {
     Quorum,
     /// A signed roll-up attestation over a committed traversal set.
     RollupAttestation,
+    /// A grid segment policy object (its constitution) — the
+    /// authority's signature over the policy's canonical bytes.
+    SegmentPolicy,
+    /// A grid commitment spine root — the custodian's signature
+    /// binding the spine (what anchors and logs consume).
+    SpineRoot,
 }
 
 impl SigningDomain {
@@ -306,6 +312,8 @@ impl SigningDomain {
             SigningDomain::TreeHead => "UNIDPP-SIGNATIF/TREE-HEAD",
             SigningDomain::HistoricalStamp => "UNIDPP-SIGNATIF/HISTORICAL-STAMP",
             SigningDomain::Quorum => "UNIDPP-SIGNATIF/QUORUM",
+            SigningDomain::SegmentPolicy => "UNIDPP-SIGNATIF/SEGMENT-POLICY",
+            SigningDomain::SpineRoot => "UNIDPP-SIGNATIF/SPINE-ROOT",
             SigningDomain::RollupAttestation => "UNIDPP-SIGNATIF/ROLLUP-ATTESTATION",
         }
     }
