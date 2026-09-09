@@ -79,8 +79,11 @@ impl SignedProfile {
 /// the strongest grade any judgment under it may claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileCheck {
+    /// The issuer the signature resolved to.
     pub issuer: NodeId,
+    /// The profile's issuer class (retained through the signature).
     pub class: IssuerClass,
+    /// The strongest grade any judgment under this profile may claim.
     pub grade_ceiling: TrustGrade,
 }
 
