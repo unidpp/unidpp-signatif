@@ -207,6 +207,7 @@ fn unanchored_root_and_unlisted_keys_fail() {
 
 #[test]
 fn coverage_and_freshness_degrade_explicitly_through_the_pipeline() {
+    use unidpp_model::IssuerClass;
     use unidpp_model::{
         CapabilityClass, DataPointRef, FreshnessRequirement, Interval, ProfileAxes, ProfileId,
         ProfileManifest, Resolution, Traversal, TriggerPredicate, VisibilityClass,
@@ -219,6 +220,7 @@ fn coverage_and_freshness_degrade_explicitly_through_the_pipeline() {
     let log = common::passport_log(&subject, T0 + 60, "issuer-key-a");
 
     let profile = ProfileManifest {
+        issuer_class: IssuerClass::Law,
         id: ProfileId::new("urn:unidpp:profile:eu-batt").unwrap(),
         axes: ProfileAxes::jurisdiction("EU"),
         trigger: TriggerPredicate::Any,

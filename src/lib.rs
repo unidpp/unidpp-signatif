@@ -70,6 +70,7 @@ pub mod revoke;
 pub mod rollup;
 pub mod scope;
 pub mod sign;
+pub mod signed_profile;
 pub mod threshold;
 pub mod verify;
 

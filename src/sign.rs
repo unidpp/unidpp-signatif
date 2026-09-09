@@ -300,6 +300,9 @@ pub enum SigningDomain {
     /// A grid commitment spine root — the custodian's signature
     /// binding the spine (what anchors and logs consume).
     SpineRoot,
+    /// A signed profile — the issuer's signature over the profile
+    /// manifest (PR-1: the issuer class grades what it may claim).
+    Profile,
 }
 
 impl SigningDomain {
@@ -314,6 +317,7 @@ impl SigningDomain {
             SigningDomain::Quorum => "UNIDPP-SIGNATIF/QUORUM",
             SigningDomain::SegmentPolicy => "UNIDPP-SIGNATIF/SEGMENT-POLICY",
             SigningDomain::SpineRoot => "UNIDPP-SIGNATIF/SPINE-ROOT",
+            SigningDomain::Profile => "UNIDPP-SIGNATIF/PROFILE",
             SigningDomain::RollupAttestation => "UNIDPP-SIGNATIF/ROLLUP-ATTESTATION",
         }
     }
