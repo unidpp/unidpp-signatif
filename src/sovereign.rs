@@ -119,7 +119,10 @@ impl SovereignAttestation {
         quorum: Option<(&crate::graph::NodeId, usize, &[&KeyPair])>,
     ) -> Result<SovereignAttestation, SignatifError> {
         let payload = statement.canonical_bytes();
-        let signature = SignatureSlot::sign(key, SigningDomain::Quorum, &payload)?;
+        // CN-3: the service's own signature rides its OWN domain —
+        // the quorum co-signature (below) rides Quorum. A statement
+        // signed in one domain does not verify in the other.
+        let signature = SignatureSlot::sign(key, SigningDomain::SovereignAttestation, &payload)?;
         let quorum_att = match (statement.claim.high_stakes(), quorum) {
             (true, Some((quorum_id, threshold, member_keys))) => {
                 let att =
@@ -159,7 +162,7 @@ impl SovereignAttestation {
                 ))
             })?;
         self.signature.verify(
-            SigningDomain::Quorum,
+            SigningDomain::SovereignAttestation,
             &self.statement.canonical_bytes(),
             public,
         )?;
@@ -306,6 +309,32 @@ mod tests {
             CoverageGrade::AttestedByAuthority
         );
         assert!(attestation.quorum.is_none());
+    }
+
+    // CN-3's signature-side pin: the same statement bytes signed in
+    // the QUORUM domain (the old confusion) do not verify as a
+    // sovereign attestation — domains are disjoint, and the
+    // co-signature does not substitute for the service's own.
+    #[test]
+    fn cross_domain_signature_substitution_fails() {
+        let service = KeyPair::seeded(Suite::Ed25519, b"cn-attestation-service").unwrap();
+        let graph = graph_with(&[("cn-attestation-service", &service)]);
+        let mut attestation = SovereignAttestation::issue(
+            statement(ClaimClass::Freshness),
+            "cn-attestation-service",
+            &service,
+            None,
+        )
+        .unwrap();
+        assert!(attestation.verify(&graph).is_ok());
+        // Re-sign the same bytes in the Quorum domain: refused.
+        attestation.signature = SignatureSlot::sign(
+            &service,
+            crate::sign::SigningDomain::Quorum,
+            &attestation.statement.canonical_bytes(),
+        )
+        .unwrap();
+        assert!(attestation.verify(&graph).is_err());
     }
 
     #[test]

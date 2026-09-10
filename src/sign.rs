@@ -303,6 +303,13 @@ pub enum SigningDomain {
     /// A signed profile — the issuer's signature over the profile
     /// manifest (PR-1: the issuer class grades what it may claim).
     Profile,
+    /// An S13 cross-border message (request, response, offer,
+    /// escalation) — the choreography's signed objects (XB-6).
+    S13Message,
+    /// A sovereign attestation service's signature over an
+    /// attestation statement (XB-2) — distinct from the quorum
+    /// co-signature it may carry.
+    SovereignAttestation,
 }
 
 impl SigningDomain {
@@ -318,6 +325,8 @@ impl SigningDomain {
             SigningDomain::SegmentPolicy => "UNIDPP-SIGNATIF/SEGMENT-POLICY",
             SigningDomain::SpineRoot => "UNIDPP-SIGNATIF/SPINE-ROOT",
             SigningDomain::Profile => "UNIDPP-SIGNATIF/PROFILE",
+            SigningDomain::S13Message => "UNIDPP-SIGNATIF/S13-MESSAGE",
+            SigningDomain::SovereignAttestation => "UNIDPP-SIGNATIF/SOVEREIGN-ATTESTATION",
             SigningDomain::RollupAttestation => "UNIDPP-SIGNATIF/ROLLUP-ATTESTATION",
         }
     }
