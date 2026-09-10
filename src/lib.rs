@@ -62,6 +62,7 @@
 
 pub mod acceptance;
 pub mod anchor;
+pub mod declaration;
 pub mod dossier;
 pub mod envelope;
 pub mod frozen;

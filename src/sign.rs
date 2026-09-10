@@ -310,6 +310,9 @@ pub enum SigningDomain {
     /// attestation statement (XB-2) — distinct from the quorum
     /// co-signature it may carry.
     SovereignAttestation,
+    /// A scheme's interop declaration (SI-8) — the signed posture
+    /// S13 evaluation and hub policy checks consult.
+    InteropDeclaration,
 }
 
 impl SigningDomain {
@@ -327,6 +330,7 @@ impl SigningDomain {
             SigningDomain::Profile => "UNIDPP-SIGNATIF/PROFILE",
             SigningDomain::S13Message => "UNIDPP-SIGNATIF/S13-MESSAGE",
             SigningDomain::SovereignAttestation => "UNIDPP-SIGNATIF/SOVEREIGN-ATTESTATION",
+            SigningDomain::InteropDeclaration => "UNIDPP-SIGNATIF/INTEROP-DECLARATION",
             SigningDomain::RollupAttestation => "UNIDPP-SIGNATIF/ROLLUP-ATTESTATION",
         }
     }
