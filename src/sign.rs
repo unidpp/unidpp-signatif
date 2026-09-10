@@ -313,6 +313,9 @@ pub enum SigningDomain {
     /// A scheme's interop declaration (SI-8) — the signed posture
     /// S13 evaluation and hub policy checks consult.
     InteropDeclaration,
+    /// A hub's faithful-relay attestation (SI-2) — what it forwarded,
+    /// between whom, for which class.
+    HubRelay,
 }
 
 impl SigningDomain {
@@ -331,6 +334,7 @@ impl SigningDomain {
             SigningDomain::S13Message => "UNIDPP-SIGNATIF/S13-MESSAGE",
             SigningDomain::SovereignAttestation => "UNIDPP-SIGNATIF/SOVEREIGN-ATTESTATION",
             SigningDomain::InteropDeclaration => "UNIDPP-SIGNATIF/INTEROP-DECLARATION",
+            SigningDomain::HubRelay => "UNIDPP-SIGNATIF/HUB-RELAY",
             SigningDomain::RollupAttestation => "UNIDPP-SIGNATIF/ROLLUP-ATTESTATION",
         }
     }

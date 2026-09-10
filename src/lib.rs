@@ -79,6 +79,7 @@ pub mod signed_profile;
 pub mod sovereign;
 pub mod spine_anchor;
 pub mod threshold;
+pub mod transport;
 pub mod verify;
 
 #[cfg(feature = "confium")]
