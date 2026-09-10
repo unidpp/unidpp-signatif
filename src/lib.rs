@@ -68,6 +68,7 @@ pub mod keyring;
 pub mod manifest;
 pub mod revoke;
 pub mod rollup;
+pub mod s13;
 pub mod scope;
 pub mod sign;
 pub mod signed_profile;

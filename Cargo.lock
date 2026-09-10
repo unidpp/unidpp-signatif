@@ -836,6 +836,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "unidpp-s13"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "unidpp-grid",
+ "unidpp-model",
+]
+
+[[package]]
 name = "unidpp-signatif"
 version = "0.1.0"
 dependencies = [
@@ -853,6 +863,7 @@ dependencies = [
  "unidpp-event",
  "unidpp-grid",
  "unidpp-model",
+ "unidpp-s13",
  "unidpp-transform",
  "unidpp-verdict",
  "x25519-dalek",
