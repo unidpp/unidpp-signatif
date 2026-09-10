@@ -58,8 +58,11 @@ impl SignedS13Request {
                     self.requester
                 ))
             })?;
-        self.signature
-            .verify(SigningDomain::S13Message, &self.request.canonical_bytes(), public)
+        self.signature.verify(
+            SigningDomain::S13Message,
+            &self.request.canonical_bytes(),
+            public,
+        )
     }
 }
 
@@ -74,13 +77,13 @@ pub struct SignedS13Response {
 impl SignedS13Response {
     /// The custodian signs the response's canonical bytes (the
     /// response names its custodian).
-    pub fn issue(
-        response: S13Response,
-        key: &KeyPair,
-    ) -> Result<SignedS13Response, SignatifError> {
+    pub fn issue(response: S13Response, key: &KeyPair) -> Result<SignedS13Response, SignatifError> {
         let signature =
             SignatureSlot::sign(key, SigningDomain::S13Message, &response.canonical_bytes())?;
-        Ok(SignedS13Response { response, signature })
+        Ok(SignedS13Response {
+            response,
+            signature,
+        })
     }
 
     /// Verify under the graph: the key must be the DECLARED
@@ -187,11 +190,7 @@ impl S13Journal {
                     }
                     decisions.push(S13Decision {
                         request_digest: signed.response.request_digest,
-                        outcome: signed
-                            .response
-                            .outcome
-                            .token()
-                            .to_string(),
+                        outcome: signed.response.outcome.token().to_string(),
                         governing_policy: signed.response.governing_policy.clone(),
                         governing_policy_version: signed.response.governing_policy_version,
                     });
@@ -312,7 +311,13 @@ mod tests {
             let tokens: Vec<&str> = decisions.iter().map(|d| d.outcome.as_str()).collect();
             assert_eq!(
                 tokens,
-                ["permit", "permit-paired", "attestation-offer", "escalation", "deny"],
+                [
+                    "permit",
+                    "permit-paired",
+                    "attestation-offer",
+                    "escalation",
+                    "deny"
+                ],
                 "{:?}",
                 journal.side
             );
@@ -355,7 +360,9 @@ mod tests {
             &vkey,
             &ckey,
         );
-        let S13JournalEntry::Response(mut signed) = a else { unreachable!() };
+        let S13JournalEntry::Response(mut signed) = a else {
+            unreachable!()
+        };
         signed.response.governing_policy_version = 2;
         let mut journal = S13Journal::new(S13Side::Custodian);
         journal.append(q);
