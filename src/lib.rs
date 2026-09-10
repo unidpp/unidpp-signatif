@@ -75,6 +75,7 @@ pub mod scope;
 pub mod sign;
 pub mod signed_profile;
 pub mod sovereign;
+pub mod spine_anchor;
 pub mod threshold;
 pub mod verify;
 

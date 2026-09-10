@@ -12,8 +12,10 @@
 use crate::grid::{SignedPolicy, SignedSpine};
 use crate::s13::S13Journal;
 use crate::sovereign::SovereignAttestation;
+use crate::spine_anchor::SpineReceipt;
 use crate::SignatifError;
 use unidpp_grid::SpineProof;
+use unidpp_model::Hash;
 
 /// The exchanged object set for one subject.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -30,6 +32,9 @@ pub struct Dossier {
     pub attestations: Vec<SovereignAttestation>,
     /// The S13 exchange journal (requests and answers, signed).
     pub journal: S13Journal,
+    /// The spine's log receipt (CN-4), when served.
+    #[serde(default)]
+    pub receipt: Option<SpineReceipt>,
 }
 
 impl Dossier {
@@ -88,6 +93,14 @@ impl Dossier {
                 )));
             }
             check.attestations_ok += 1;
+        }
+
+        if let Some(receipt) = &self.receipt {
+            if receipt.spine_digest != Hash(self.spine.spine.digest()) {
+                return Err(SignatifError::crypto(
+                    "dossier: the log receipt binds a different spine".to_string(),
+                ));
+            }
         }
 
         check.journal_decisions = self.journal.replay(graph)?;
@@ -311,6 +324,7 @@ mod tests {
             proofs: vec![proof],
             attestations: vec![attestation],
             journal,
+            receipt: None,
         }
     }
 }
