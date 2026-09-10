@@ -119,6 +119,87 @@ pub enum S13JournalEntry {
     Request(SignedS13Request),
     /// The custodian's signed response.
     Response(SignedS13Response),
+    /// A non-repudiable response (the authority counter-signed:
+    /// offers and refusals — XB-7).
+    Countersigned(NonRepudiableResponse),
+}
+
+/// The non-repudiable response (XB-7): the custodian EXECUTES the
+/// policy; the AUTHORITY answers for it. Offers and refusals carry
+/// the policy authority's counter-signature over the response
+/// digest and the response's place in the per-(subject, segment)
+/// sequence — a dispute is decided from the record: who answered,
+/// under which policy, at which point in the sequence.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NonRepudiableResponse {
+    /// The custodian's signed response (the offer or refusal).
+    pub signed: SignedS13Response,
+    /// The policy authority (the governing policy's authority).
+    pub authority: String,
+    /// The authority's counter-signature over (response digest ||
+    /// sequence || policy id || version).
+    pub authority_signature: SignatureSlot,
+    /// Monotone per (subject, segment); a replayed offer carries a
+    /// stale sequence and fails.
+    pub sequence: u64,
+}
+
+impl NonRepudiableResponse {
+    /// What the authority signs: the answer's identity and place.
+    fn authority_payload_for(response: &S13Response, sequence: u64) -> Vec<u8> {
+        let mut w = unidpp_model::CanonicalWriter::new();
+        w.write_bytes(&response.request_digest);
+        w.write_bytes(&sequence.to_le_bytes());
+        w.write_bytes(response.governing_policy.as_bytes());
+        w.write_bytes(&response.governing_policy_version.to_le_bytes());
+        w.into_bytes()
+    }
+
+    /// Issue: the authority counter-signs the custodian's answer.
+    pub fn issue(
+        signed: SignedS13Response,
+        authority: &str,
+        authority_key: &KeyPair,
+        sequence: u64,
+    ) -> Result<NonRepudiableResponse, SignatifError> {
+        let payload = Self::authority_payload_for(&signed.response, sequence);
+        let authority_signature =
+            SignatureSlot::sign(authority_key, SigningDomain::S13Message, &payload)?;
+        Ok(NonRepudiableResponse {
+            signed,
+            authority: authority.into(),
+            authority_signature,
+            sequence,
+        })
+    }
+
+    /// Verify under the graph: the custodian's signature AND the
+    /// authority's counter-signature (the key must be the DECLARED
+    /// authority's), at the expected sequence (a stale sequence is a
+    /// replay).
+    pub fn verify(&self, graph: &TrustGraph, expected_sequence: u64) -> Result<(), SignatifError> {
+        self.signed.verify(graph)?;
+        if self.sequence != expected_sequence {
+            return Err(SignatifError::crypto(format!(
+                "s13 non-repudiation: stale sequence {} (expected {}) — a replayed answer",
+                self.sequence, expected_sequence
+            )));
+        }
+        let node = NodeId::new(&self.authority)
+            .map_err(|e| SignatifError::crypto(format!("s13 authority: {e}")))?;
+        let public = graph
+            .node(&node)
+            .and_then(|n| n.key(&self.authority_signature.key_id))
+            .ok_or_else(|| {
+                SignatifError::crypto(format!(
+                    "s13 authority `{}` has no such key",
+                    self.authority
+                ))
+            })?;
+        let payload = Self::authority_payload_for(&self.signed.response, self.sequence);
+        self.authority_signature
+            .verify(SigningDomain::S13Message, &payload, public)
+    }
 }
 
 /// Which side's journal this is (both sides journal the exchange).
@@ -190,6 +271,8 @@ impl S13Journal {
     pub fn replay(&self, graph: &TrustGraph) -> Result<Vec<S13Decision>, SignatifError> {
         let mut decisions = Vec::new();
         let mut seen_requests: Vec<[u8; 32]> = Vec::new();
+        let mut sequences: std::collections::BTreeMap<(String, String), u64> =
+            std::collections::BTreeMap::new();
         for entry in &self.entries {
             match entry {
                 S13JournalEntry::Request(signed) => {
@@ -204,17 +287,52 @@ impl S13Journal {
                                 .to_string(),
                         ));
                     }
-                    decisions.push(S13Decision {
-                        request_digest: signed.response.request_digest,
-                        outcome: signed.response.outcome.token().to_string(),
-                        governing_policy: signed.response.governing_policy.clone(),
-                        governing_policy_version: signed.response.governing_policy_version,
-                    });
+                    decisions.push(decision_of(&signed.response));
+                }
+                S13JournalEntry::Countersigned(nr) => {
+                    if !seen_requests.contains(&nr.signed.response.request_digest) {
+                        return Err(SignatifError::crypto(
+                            "journal replay: an answer is bound to no journaled request"
+                                .to_string(),
+                        ));
+                    }
+                    // The answer's place in the per-(subject, custodian)
+                    // sequence: the authority counter-signs each place;
+                    // a rewind is a replay (XB-7).
+                    let subject = subject_of(&self.entries, &nr.signed.response.request_digest);
+                    let key = (subject, nr.signed.response.custodian.clone());
+                    let expected = sequences.get(&key).map_or(1, |last| last + 1);
+                    nr.verify(graph, expected)
+                        .map_err(|e| SignatifError::crypto(format!("journal replay: {e}")))?;
+                    sequences.insert(key, nr.sequence);
+                    decisions.push(decision_of(&nr.signed.response));
                 }
             }
         }
         Ok(decisions)
     }
+}
+
+/// A decision reconstructed from one response.
+fn decision_of(response: &S13Response) -> S13Decision {
+    S13Decision {
+        request_digest: response.request_digest,
+        outcome: response.outcome.token().to_string(),
+        governing_policy: response.governing_policy.clone(),
+        governing_policy_version: response.governing_policy_version,
+    }
+}
+
+/// The subject of a journaled request (by digest).
+fn subject_of(entries: &[S13JournalEntry], digest: &[u8; 32]) -> String {
+    for entry in entries {
+        if let S13JournalEntry::Request(signed) = entry {
+            if &signed.request.digest() == digest {
+                return signed.request.subject.clone();
+            }
+        }
+    }
+    String::new()
 }
 
 #[cfg(test)]
@@ -283,8 +401,19 @@ mod tests {
     fn cast() -> (TrustGraph, KeyPair, KeyPair) {
         let verifier = KeyPair::seeded(Suite::Ed25519, b"s13/de-zoll").unwrap();
         let custodian = KeyPair::seeded(Suite::Ed25519, b"s13/weilian").unwrap();
-        let graph = graph_with(&[("de-zoll", &verifier), ("weilian-shenzhen", &custodian)]);
+        let graph = graph_with(&[
+            ("de-zoll", &verifier),
+            ("weilian-shenzhen", &custodian),
+            (
+                "cn-samr",
+                &KeyPair::seeded(Suite::Ed25519, b"s13/cn-samr").unwrap(),
+            ),
+        ]);
         (graph, verifier, custodian)
+    }
+
+    fn authority_key() -> KeyPair {
+        KeyPair::seeded(Suite::Ed25519, b"s13/cn-samr").unwrap()
     }
 
     // XB-6's verify: all four outcomes (plus the stated denial)
@@ -383,6 +512,67 @@ mod tests {
         let mut journal = S13Journal::new(S13Side::Custodian);
         journal.append(q);
         journal.append(S13JournalEntry::Response(signed));
+        assert!(journal.replay(&graph).is_err());
+    }
+
+    // XB-7: offers and refusals carry the policy AUTHORITY's
+    // counter-signature; a dispute is decided from the record.
+    #[test]
+    fn offers_carry_the_authoritys_signature_and_replay_from_the_record() {
+        let (graph, vkey, ckey) = cast();
+        let pol = policy(RevealClass::OriginSealed);
+        let req = request("2030-06-01T08:00:00Z");
+        let signed_req = SignedS13Request::issue(req, "de-zoll", &vkey).unwrap();
+        let resp = S13Response::evaluate(&signed_req.request, &pol, "weilian-shenzhen");
+        let signed_resp = SignedS13Response::issue(resp, &ckey).unwrap();
+        let nr = NonRepudiableResponse::issue(signed_resp, "cn-samr", &authority_key(), 1).unwrap();
+        assert!(nr.verify(&graph, 1).is_ok());
+
+        // The dispute is decided from the record: the journal
+        // replays the countersigned exchange, both signatures
+        // verified, the decision and its governing policy named.
+        let mut journal = S13Journal::new(S13Side::Custodian);
+        journal.append(S13JournalEntry::Request(signed_req));
+        journal.append(S13JournalEntry::Countersigned(nr));
+        let decisions = journal.replay(&graph).expect("replay");
+        assert_eq!(decisions.len(), 1);
+        assert_eq!(decisions[0].outcome, "attestation-offer");
+        assert_eq!(decisions[0].governing_policy, "p-test");
+    }
+
+    // XB-7's verify: a forged offer (the custodian's key pretending
+    // to the authority's counter-signature) fails.
+    #[test]
+    fn forged_offers_fail_signature() {
+        let (graph, vkey, ckey) = cast();
+        let pol = policy(RevealClass::OriginSealed);
+        let req = request("2030-06-01T08:00:00Z");
+        let signed_req = SignedS13Request::issue(req, "de-zoll", &vkey).unwrap();
+        let resp = S13Response::evaluate(&signed_req.request, &pol, "weilian-shenzhen");
+        let signed_resp = SignedS13Response::issue(resp, &ckey).unwrap();
+        let forged = NonRepudiableResponse::issue(signed_resp, "cn-samr", &ckey, 1).unwrap();
+        assert!(forged.verify(&graph, 1).is_err());
+    }
+
+    // XB-7's verify: a replayed offer fails the sequence.
+    #[test]
+    fn replayed_offers_fail_sequence() {
+        let (graph, vkey, ckey) = cast();
+        let pol = policy(RevealClass::OriginSealed);
+        let req = request("2030-06-01T08:00:00Z");
+        let signed_req = SignedS13Request::issue(req, "de-zoll", &vkey).unwrap();
+        let resp = S13Response::evaluate(&signed_req.request, &pol, "weilian-shenzhen");
+        let signed_resp = SignedS13Response::issue(resp, &ckey).unwrap();
+        let nr = NonRepudiableResponse::issue(signed_resp, "cn-samr", &authority_key(), 1).unwrap();
+
+        // Direct: stale sequence is a replay.
+        assert!(nr.verify(&graph, 2).is_err());
+
+        // Through the journal: the same countersigned answer twice.
+        let mut journal = S13Journal::new(S13Side::Custodian);
+        journal.append(S13JournalEntry::Request(signed_req));
+        journal.append(S13JournalEntry::Countersigned(nr.clone()));
+        journal.append(S13JournalEntry::Countersigned(nr));
         assert!(journal.replay(&graph).is_err());
     }
 
