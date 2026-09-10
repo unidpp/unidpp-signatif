@@ -5,6 +5,7 @@
 //! domain and what the quorum co-signs in the QUORUM domain.
 //! Regeneration: UNIDPP_UPDATE_FIXTURES=1 cargo test.
 
+use unidpp_signatif::frozen::FrozenView;
 use unidpp_signatif::sovereign::{AttestationStatement, ClaimClass};
 
 fn hex(b: &[u8]) -> String {
@@ -55,4 +56,25 @@ fn vector_attestation_statement() {
             "digest_hex": hex(&statement.digest()),
         }),
     );
+}
+
+#[test]
+fn vector_frozen_view() {
+    let (view, _graph) = unidpp_signatif::frozen::example::battery_view();
+    check(
+        "frozen-view.json",
+        serde_json::json!({
+            "version": 1,
+            "family": "signatif/frozen-view",
+            "note": "SI-1's worked example — the battery frozen view (payload + 5-axis descriptor + lens + spine-proved inputs + dossier bundle + instructions)",
+            "view": serde_json::to_value(&view).unwrap(),
+            "canonical_hex": hex(&view.canonical_bytes()),
+            "digest_hex": hex(&view.digest()),
+        }),
+    );
+    // The example must satisfy its own contract (the fixture pins a
+    // VALID view, not just any bytes).
+    let json = serde_json::to_string(&view).unwrap();
+    let back: FrozenView = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.digest(), view.digest());
 }

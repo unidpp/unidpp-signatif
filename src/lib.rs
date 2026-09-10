@@ -64,6 +64,7 @@ pub mod acceptance;
 pub mod anchor;
 pub mod dossier;
 pub mod envelope;
+pub mod frozen;
 pub mod graph;
 pub mod grid;
 pub mod keyring;
