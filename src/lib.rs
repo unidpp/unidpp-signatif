@@ -70,6 +70,7 @@ pub mod graph;
 pub mod grid;
 pub mod keyring;
 pub mod manifest;
+pub mod provenance;
 pub mod revoke;
 pub mod rollup;
 pub mod s13;
