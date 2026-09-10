@@ -21,9 +21,11 @@ use unidpp_s13::{S13Request, S13Response};
 /// journals).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SignedS13Request {
+    /// The request (its canonical bytes are what is signed).
     pub request: S13Request,
     /// The requesting node (trust-graph id; signs the request).
     pub requester: String,
+    /// The requester's signature in the S13-MESSAGE domain.
     pub signature: SignatureSlot,
 }
 
@@ -70,7 +72,9 @@ impl SignedS13Request {
 /// journals).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SignedS13Response {
+    /// The response (its canonical bytes are what is signed).
     pub response: S13Response,
+    /// The custodian's signature in the S13-MESSAGE domain.
     pub signature: SignatureSlot,
 }
 
@@ -111,7 +115,9 @@ impl SignedS13Response {
 /// One journaled S13 message.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum S13JournalEntry {
+    /// The verifier's signed request.
     Request(SignedS13Request),
+    /// The custodian's signed response.
     Response(SignedS13Response),
 }
 
@@ -119,7 +125,9 @@ pub enum S13JournalEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum S13Side {
+    /// The asking side (its requests, and the answers it received).
     Verifier,
+    /// The answering side (the requests it received, its answers).
     Custodian,
 }
 
@@ -133,6 +141,7 @@ pub struct S13Decision {
     pub outcome: String,
     /// The governing policy the custodian evaluated under.
     pub governing_policy: String,
+    /// The governing policy's version.
     pub governing_policy_version: u64,
 }
 
@@ -141,11 +150,14 @@ pub struct S13Decision {
 /// journal alone (XB-6) — nothing else is consulted.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct S13Journal {
+    /// Which side's journal this is.
     pub side: S13Side,
+    /// The signed messages, in sequence.
     pub entries: Vec<S13JournalEntry>,
 }
 
 impl S13Journal {
+    /// An empty journal for one side.
     pub fn new(side: S13Side) -> S13Journal {
         S13Journal {
             side,
@@ -153,17 +165,20 @@ impl S13Journal {
         }
     }
 
-    /// Append in sequence (the journal is append-only by
-    /// construction; reorderings are tampering and fail replay).
+    /// Append in sequence, returning the new length (the journal is
+    /// append-only by construction; reorderings are tampering and
+    /// fail replay).
     pub fn append(&mut self, entry: S13JournalEntry) -> usize {
         self.entries.push(entry);
         self.entries.len()
     }
 
+    /// The number of journaled messages.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
 
+    /// Whether nothing is journaled yet.
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
@@ -184,9 +199,10 @@ impl S13Journal {
                 S13JournalEntry::Response(signed) => {
                     signed.verify(graph)?;
                     if !seen_requests.contains(&signed.response.request_digest) {
-                        return Err(SignatifError::crypto(format!(
+                        return Err(SignatifError::crypto(
                             "journal replay: an answer is bound to no journaled request"
-                        )));
+                                .to_string(),
+                        ));
                     }
                     decisions.push(S13Decision {
                         request_digest: signed.response.request_digest,

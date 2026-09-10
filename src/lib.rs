@@ -60,6 +60,7 @@
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
+pub mod acceptance;
 pub mod anchor;
 pub mod envelope;
 pub mod graph;
