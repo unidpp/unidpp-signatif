@@ -282,7 +282,7 @@ mod tests {
         let live = grant(&key, Some("2030-12-31T23:59:59Z"));
         assert_eq!(
             standing_at(
-                &[live.clone()],
+                std::slice::from_ref(&live),
                 "cn-bms-lab",
                 "2030-06-01T00:00:00Z",
                 &graph
