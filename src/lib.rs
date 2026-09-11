@@ -69,6 +69,7 @@ pub mod envelope;
 pub mod frozen;
 pub mod graph;
 pub mod grid;
+pub mod hierarchy;
 pub mod keyring;
 pub mod manifest;
 pub mod party;

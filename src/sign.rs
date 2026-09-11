@@ -319,6 +319,8 @@ pub enum SigningDomain {
     /// An accreditation authority's grant to a conformity body (TR-9,
     /// the A→C edge of the pyramid).
     Accreditation,
+    /// A test laboratory's DCC-style calibration certificate (TR-4).
+    Calibration,
 }
 
 impl SigningDomain {
@@ -339,6 +341,7 @@ impl SigningDomain {
             SigningDomain::InteropDeclaration => "UNIDPP-SIGNATIF/INTEROP-DECLARATION",
             SigningDomain::HubRelay => "UNIDPP-SIGNATIF/HUB-RELAY",
             SigningDomain::Accreditation => "UNIDPP-SIGNATIF/ACCREDITATION",
+            SigningDomain::Calibration => "UNIDPP-SIGNATIF/CALIBRATION",
             SigningDomain::RollupAttestation => "UNIDPP-SIGNATIF/ROLLUP-ATTESTATION",
         }
     }
