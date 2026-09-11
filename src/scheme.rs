@@ -12,14 +12,14 @@
 //! identities without the origin's semantics), and the FRESHNESS
 //! question (a stale bridge degrades exactly its covered classes).
 
-use crate::declaration::{DeclarationSet, HarmonizationLevel, RecognitionMode, TransportMode};
+use crate::declaration::{DeclarationSet, HarmonizationLevel, RecognitionMode};
 use crate::graph::{NodeId, TrustGraph};
 use crate::keyring::KeyPair;
 use crate::party::ObjectClass;
 use crate::sign::{SignatureSlot, SigningDomain};
 use crate::SignatifError;
 use unidpp_model::time::Timestamp;
-use unidpp_model::{sha256, CanonicalWriter};
+use unidpp_model::CanonicalWriter;
 
 // ---------------------------------------------------------------------------
 // SI-4 — recognition modes, per object class
