@@ -68,6 +68,7 @@ impl AccreditationObject {
     /// Issue: the authority signs the canonical bytes. The signing
     /// matrix is consulted — only an accreditation authority (or a
     /// government) may grant an accreditation.
+    #[allow(clippy::too_many_arguments)] // the grant's fields are the pyramid's edge
     pub fn issue(
         accredited: &str,
         authority: &str,
