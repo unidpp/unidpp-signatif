@@ -77,6 +77,7 @@ pub mod provenance;
 pub mod revoke;
 pub mod rollup;
 pub mod s13;
+pub mod scheme;
 pub mod scope;
 pub mod sign;
 pub mod signed_profile;
