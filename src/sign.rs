@@ -316,6 +316,9 @@ pub enum SigningDomain {
     /// A hub's faithful-relay attestation (SI-2) — what it forwarded,
     /// between whom, for which class.
     HubRelay,
+    /// An accreditation authority's grant to a conformity body (TR-9,
+    /// the A→C edge of the pyramid).
+    Accreditation,
 }
 
 impl SigningDomain {
@@ -335,6 +338,7 @@ impl SigningDomain {
             SigningDomain::SovereignAttestation => "UNIDPP-SIGNATIF/SOVEREIGN-ATTESTATION",
             SigningDomain::InteropDeclaration => "UNIDPP-SIGNATIF/INTEROP-DECLARATION",
             SigningDomain::HubRelay => "UNIDPP-SIGNATIF/HUB-RELAY",
+            SigningDomain::Accreditation => "UNIDPP-SIGNATIF/ACCREDITATION",
             SigningDomain::RollupAttestation => "UNIDPP-SIGNATIF/ROLLUP-ATTESTATION",
         }
     }

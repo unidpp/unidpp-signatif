@@ -61,6 +61,7 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 
 pub mod acceptance;
+pub mod accreditation;
 pub mod anchor;
 pub mod declaration;
 pub mod dossier;
