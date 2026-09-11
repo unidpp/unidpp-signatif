@@ -117,6 +117,11 @@ pub struct DelegationNode {
     pub kind: NodeKind,
     /// Keys registered to this node.
     pub keys: Vec<RegisteredKey>,
+    /// The node's party class (TR-1: the role in the world —
+    /// regulator, manufacturer, conformity body…), orthogonal to
+    /// the structural kind. Absent: undeclared.
+    #[serde(default)]
+    pub party: Option<crate::party::PartyClass>,
 }
 
 impl DelegationNode {
@@ -126,6 +131,7 @@ impl DelegationNode {
             id,
             kind,
             keys: Vec::new(),
+            party: None,
         }
     }
 
