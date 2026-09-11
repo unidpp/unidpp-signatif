@@ -375,6 +375,7 @@ pub fn bridge_health(bridges: &[BridgeDescriptor], at: &str, max_age_secs: i64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::declaration::TransportMode;
     use crate::declaration::{ClassPosture, InteropDeclaration};
     use crate::graph::{DelegationNode, NodeKind, RegisteredKey};
     use crate::keyring::KeyId;
