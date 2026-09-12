@@ -15,7 +15,6 @@ mod common;
 use common::topology;
 
 use unidpp_signatif::graph::KeyDirectory;
-use unidpp_signatif::keyring::KeyPair;
 use unidpp_signatif::sign::{AcceptancePolicy, CoSignature, SigningDomain, Suite};
 
 #[test]
