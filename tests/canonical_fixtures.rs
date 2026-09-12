@@ -5,6 +5,8 @@
 //! domain and what the quorum co-signs in the QUORUM domain.
 //! Regeneration: UNIDPP_UPDATE_FIXTURES=1 cargo test.
 
+use unidpp_grid::{PolicyObject, RevealClass};
+use unidpp_s13::{S13Request, S13Response};
 use unidpp_signatif::declaration::{
     ClassPosture, HarmonizationLevel, InteropDeclaration, RecognitionMode, TransportMode,
 };
@@ -130,6 +132,62 @@ fn vector_interop_declaration() {
             "declarer_public_hex": hex(key.public().as_bytes()),
             "canonical_hex": hex(&declaration.canonical_bytes()),
             "digest_hex": hex(&declaration.digest()),
+        }),
+    );
+}
+
+#[test]
+fn vector_s13_signed_exchange() {
+    // The F2 class material as data: a verifier-signed request and
+    // the custodian's signed response over the canonical-fixtures'
+    // request/response objects, both publics riding the fixture so
+    // the foreign harness verifies the S13-MESSAGE signatures
+    // without a trust graph.
+    let verifier_key = unidpp_signatif::keyring::KeyPair::seeded(
+        unidpp_signatif::sign::Suite::Ed25519,
+        b"s13/de-zoll",
+    )
+    .unwrap();
+    let custodian_key = unidpp_signatif::keyring::KeyPair::seeded(
+        unidpp_signatif::sign::Suite::Ed25519,
+        b"s13/weilian",
+    )
+    .unwrap();
+    let request = S13Request {
+        verifier: "de-zoll".into(),
+        subject: "urn:unidpp:passport:pack-0001".into(),
+        profile: "urn:unidpp:profile:eu-battery".into(),
+        segment: "cn-dynamic".into(),
+        at: "2030-06-01T08:00:00Z".into(),
+    };
+    let policy = PolicyObject {
+        policy_id: "cn-dynamic-bms".into(),
+        version: 1,
+        authority: "cn-samr".into(),
+        readers: vec!["cn-customs".into()],
+        verifiers: vec!["cn-customs".into(), "de-zoll".into()],
+        writers: vec!["weilian-shenzhen".into()],
+        reveal: RevealClass::OriginSealed,
+        suites: vec!["sm2".into()],
+        valid_from: "2027-01-01T00:00:00Z".into(),
+        valid_to: None,
+        superseded_by: None,
+    };
+    let signed_request =
+        unidpp_signatif::s13::SignedS13Request::issue(request, "de-zoll", &verifier_key).unwrap();
+    let response = S13Response::evaluate(&signed_request.request, &policy, "weilian-shenzhen");
+    let signed_response =
+        unidpp_signatif::s13::SignedS13Response::issue(response, &custodian_key).unwrap();
+    check(
+        "s13-signed-exchange.json",
+        serde_json::json!({
+            "version": 1,
+            "family": "signatif/s13-signed-exchange",
+            "policy": serde_json::to_value(&policy).unwrap(),
+            "signed_request": serde_json::to_value(&signed_request).unwrap(),
+            "requester_public_hex": hex(verifier_key.public().as_bytes()),
+            "signed_response": serde_json::to_value(&signed_response).unwrap(),
+            "responder_public_hex": hex(custodian_key.public().as_bytes()),
         }),
     );
 }
