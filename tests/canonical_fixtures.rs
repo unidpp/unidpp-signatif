@@ -65,7 +65,12 @@ fn vector_attestation_statement() {
 
 #[test]
 fn vector_frozen_view() {
-    let (view, _graph) = unidpp_signatif::frozen::example::battery_view();
+    let (view, graph) = unidpp_signatif::frozen::example::battery_view();
+    // The view's anchors (each node's registered keys) ride the
+    // fixture — the F1/F4 claim tests verify under these, the
+    // third-party form: the runner's own anchors, never anything
+    // from the view.
+    let anchors = graph.anchors();
     check(
         "frozen-view.json",
         serde_json::json!({
@@ -73,6 +78,7 @@ fn vector_frozen_view() {
             "family": "signatif/frozen-view",
             "note": "SI-1's worked example — the battery frozen view (payload + 5-axis descriptor + lens + spine-proved inputs + dossier bundle + instructions)",
             "view": serde_json::to_value(&view).unwrap(),
+            "anchors": anchors,
             "canonical_hex": hex(&view.canonical_bytes()),
             "digest_hex": hex(&view.digest()),
         }),

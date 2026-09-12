@@ -556,6 +556,26 @@ impl TrustGraph {
     }
 
     /// Node count.
+    /// The graph's anchors as data: node id → its registered keys
+    /// (public hex + suite). What a third-party verifier pins.
+    pub fn anchors(&self) -> std::collections::BTreeMap<String, Vec<serde_json::Value>> {
+        let mut out = std::collections::BTreeMap::new();
+        for node in self.nodes() {
+            let keys = node
+                .keys
+                .iter()
+                .map(|k| {
+                    serde_json::json!({
+                        "public_hex": k.public.as_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>(),
+                        "suite": k.public.suite().as_str(),
+                    })
+                })
+                .collect();
+            out.insert(node.id.as_str().to_string(), keys);
+        }
+        out
+    }
+
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
