@@ -64,6 +64,7 @@ pub mod acceptance;
 pub mod accreditation;
 pub mod anchor;
 pub mod declaration;
+pub mod device;
 pub mod dossier;
 pub mod envelope;
 pub mod frozen;
