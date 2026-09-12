@@ -5,6 +5,9 @@
 //! domain and what the quorum co-signs in the QUORUM domain.
 //! Regeneration: UNIDPP_UPDATE_FIXTURES=1 cargo test.
 
+use unidpp_signatif::declaration::{
+    ClassPosture, HarmonizationLevel, InteropDeclaration, RecognitionMode, TransportMode,
+};
 use unidpp_signatif::frozen::FrozenView;
 use unidpp_signatif::sovereign::{AttestationStatement, ClaimClass};
 
@@ -77,4 +80,56 @@ fn vector_frozen_view() {
     let json = serde_json::to_string(&view).unwrap();
     let back: FrozenView = serde_json::from_str(&json).unwrap();
     assert_eq!(back.digest(), view.digest());
+}
+
+#[test]
+fn vector_interop_declaration() {
+    // A signed declaration of the EU battery scheme's posture toward
+    // its CN counterpart: two postures (the named class and the "*"
+    // fallback), issued by a seeded declarer key whose public hex
+    // rides the fixture — the foreign harness verifies the signature
+    // without a trust graph (the graph is the suite's reading).
+    let key = unidpp_signatif::keyring::KeyPair::seeded(
+        unidpp_signatif::sign::Suite::Ed25519,
+        b"decl/eu-battery-scheme",
+    )
+    .unwrap();
+    let declaration = InteropDeclaration::issue(
+        "eu-battery-scheme",
+        "cn-battery-scheme",
+        1,
+        vec![
+            ClassPosture {
+                data_class: "*".into(),
+                level: HarmonizationLevel::L1,
+                recognition: RecognitionMode::BilateralAnchors,
+                transports: vec![TransportMode::Document],
+                escalation: None,
+                reciprocity: None,
+            },
+            ClassPosture {
+                data_class: "battery.dynamic-state".into(),
+                level: HarmonizationLevel::L3,
+                recognition: RecognitionMode::MasterListMesh,
+                transports: vec![TransportMode::Hub, TransportMode::Protocol],
+                escalation: Some("urn:unidpp:ceremony:eu-cn-escalation@1".into()),
+                reciprocity: Some("urn:unidpp:treaty:eu-cn-mra@2".into()),
+            },
+        ],
+        "2030-01-01T00:00:00Z",
+        None,
+        &key,
+    )
+    .unwrap();
+    check(
+        "interop-declaration.json",
+        serde_json::json!({
+            "version": 1,
+            "family": "signatif/interop-declaration",
+            "declaration": serde_json::to_value(&declaration).unwrap(),
+            "declarer_public_hex": hex(key.public().as_bytes()),
+            "canonical_hex": hex(&declaration.canonical_bytes()),
+            "digest_hex": hex(&declaration.digest()),
+        }),
+    );
 }
