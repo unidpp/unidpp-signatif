@@ -140,7 +140,7 @@ impl Hub {
     /// What the hub signs: its identity, the forwarded bytes'
     /// digest, the endpoints, and the class — a faithful-relay
     /// attestation over exactly what crossed.
-    fn relay_payload(
+    pub fn relay_payload(
         hub_id: &str,
         evidence: &[u8],
         from: &str,
