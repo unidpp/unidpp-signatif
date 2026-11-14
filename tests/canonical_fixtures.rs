@@ -197,3 +197,85 @@ fn vector_s13_signed_exchange() {
         }),
     );
 }
+
+#[test]
+fn vector_s13_countersigned() {
+    // XB-7's non-repudiable answer as data: the policy authority's
+    // counter-signature over the custodian's answer and its place in
+    // the per-(subject, custodian) sequence. The authority payload's
+    // canonical bytes ride the fixture so a foreign implementation
+    // reproduces them and verifies the counter-signature without a
+    // trust graph.
+    let verifier_key = unidpp_signatif::keyring::KeyPair::seeded(
+        unidpp_signatif::sign::Suite::Ed25519,
+        b"s13/de-zoll",
+    )
+    .unwrap();
+    let custodian_key = unidpp_signatif::keyring::KeyPair::seeded(
+        unidpp_signatif::sign::Suite::Ed25519,
+        b"s13/weilian",
+    )
+    .unwrap();
+    let authority_key = unidpp_signatif::keyring::KeyPair::seeded(
+        unidpp_signatif::sign::Suite::Ed25519,
+        b"s13/cn-samr",
+    )
+    .unwrap();
+    let request = S13Request {
+        verifier: "de-zoll".into(),
+        subject: "urn:unidpp:passport:pack-0001".into(),
+        profile: "urn:unidpp:profile:eu-battery".into(),
+        segment: "cn-dynamic".into(),
+        at: "2030-06-01T08:00:00Z".into(),
+    };
+    let policy = PolicyObject {
+        policy_id: "cn-dynamic-bms".into(),
+        version: 1,
+        authority: "cn-samr".into(),
+        readers: vec!["cn-customs".into()],
+        verifiers: vec!["cn-customs".into(), "de-zoll".into()],
+        writers: vec!["weilian-shenzhen".into()],
+        reveal: RevealClass::OriginSealed,
+        suites: vec!["sm2".into()],
+        valid_from: "2027-01-01T00:00:00Z".into(),
+        valid_to: None,
+        superseded_by: None,
+    };
+    let signed_request =
+        unidpp_signatif::s13::SignedS13Request::issue(request, "de-zoll", &verifier_key).unwrap();
+    let response = S13Response::evaluate(&signed_request.request, &policy, "weilian-shenzhen");
+    let signed_response =
+        unidpp_signatif::s13::SignedS13Response::issue(response, &custodian_key).unwrap();
+    let countersigned = unidpp_signatif::s13::NonRepudiableResponse::issue(
+        signed_response,
+        "cn-samr",
+        &authority_key,
+        1,
+    )
+    .unwrap();
+    let mut payload = unidpp_model::CanonicalWriter::new();
+    payload.write_bytes(&countersigned.signed.response.request_digest);
+    payload.write_bytes(&countersigned.sequence.to_le_bytes());
+    payload.write_bytes(countersigned.signed.response.governing_policy.as_bytes());
+    payload.write_bytes(
+        &countersigned
+            .signed
+            .response
+            .governing_policy_version
+            .to_le_bytes(),
+    );
+    check(
+        "s13-countersigned.json",
+        serde_json::json!({
+            "version": 1,
+            "family": "signatif/s13-countersigned",
+            "countersigned": serde_json::to_value(&countersigned).unwrap(),
+            "sequence": countersigned.sequence,
+            "authority": "cn-samr",
+            "requester_public_hex": hex(verifier_key.public().as_bytes()),
+            "responder_public_hex": hex(custodian_key.public().as_bytes()),
+            "authority_public_hex": hex(authority_key.public().as_bytes()),
+            "authority_payload_hex": hex(&payload.into_bytes()),
+        }),
+    );
+}
